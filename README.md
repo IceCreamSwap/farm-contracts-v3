@@ -1,3 +1,11 @@
-https://t.me/icecreamswap
+# IceCreamSwap ROADMAP 3.0
 
-testnet
+- NEW BRAND
+- NEW FARMING SYSTEM
+- NEW TOKEN ECONOMIC
+- NEW PARTNERS
+
+```testnet only```
+
+More info:
+https://t.me/icecreamswap
