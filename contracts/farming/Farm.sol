@@ -236,7 +236,7 @@ contract Farm is Ownable, ReentrancyGuard {
                 // stake minted amount in the native pool
                 enterStaking(_amount);
                 // burn old token
-                // TODO: discuss with token economics deisgner.
+                // TODO: discuss with token economics designer.
                 pool.lpToken.safeTransfer(burn_addr, _amount);
             }
         }
