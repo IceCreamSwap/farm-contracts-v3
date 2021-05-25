@@ -20,6 +20,7 @@ contract Farm is Ownable, ReentrancyGuard {
         uint256 rewardDebt;
         uint256 lastDepositTime;
     }
+
     struct PoolInfo {
         IERC20 lpToken;
         uint256 allocPoint;
@@ -38,14 +39,16 @@ contract Farm is Ownable, ReentrancyGuard {
     uint256 public bonusEndBlock;
 
     PoolInfo[] public poolInfo;
-    mapping (uint256 => mapping (address => UserInfo)) public userInfo;
+    mapping(uint256 => mapping(address => UserInfo)) public userInfo;
     uint256 public totalAllocPoint = 0;
     uint256 public startBlock;
     bool lockStart;
 
     address burn_addr = address(0x000000000000000000000000000000000000dEaD);
+    IERC20 migrate_token;
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
+    event Migration(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
 
@@ -54,7 +57,8 @@ contract Farm is Ownable, ReentrancyGuard {
         TokenMinter _minter,
         address _devFeeAddr,
         uint256 _TokenPerBlock,
-        uint256 _startBlock
+        uint256 _startBlock,
+        IERC20 _migrate_token
     ) public {
         token = _token;
         minter = _minter;
@@ -66,20 +70,24 @@ contract Farm is Ownable, ReentrancyGuard {
 
         // staking pool
         poolInfo.push(PoolInfo({
-            lpToken: _token,
-            allocPoint: 1000,
-            lastRewardBlock: startBlock,
-            accTokenPerShare: 0,
-            depositFeeBP: 0
+        lpToken : _token,
+        allocPoint : 1000,
+        lastRewardBlock : startBlock,
+        accTokenPerShare : 0,
+        depositFeeBP : 0
         }));
 
         totalAllocPoint = 1000;
+
+        // used to migrate GLTO to ICE
+        migrate_token = _migrate_token;
 
     }
 
     function poolLength() external view returns (uint256) {
         return poolInfo.length;
     }
+
     mapping(IERC20 => bool) public poolExistence;
     modifier nonDuplicated(IERC20 _lpToken) {
         require(poolExistence[_lpToken] == false, "nonDuplicated: duplicated");
@@ -100,13 +108,13 @@ contract Farm is Ownable, ReentrancyGuard {
         uint256 lastRewardBlock = block.number > startBlock ? block.number : startBlock;
         totalAllocPoint = totalAllocPoint.add(_allocPoint);
         poolInfo.push(PoolInfo({
-            lpToken: _lpToken,
-            allocPoint: _allocPoint,
-            lastRewardBlock: lastRewardBlock,
-            accTokenPerShare: 0,
-            depositFeeBP: _depositFeeBP,
-            withdrawFeeBP: _withdrawFeeBP,
-            withdrawLockPeriod: _withdrawLockPeriod
+        lpToken : _lpToken,
+        allocPoint : _allocPoint,
+        lastRewardBlock : lastRewardBlock,
+        accTokenPerShare : 0,
+        depositFeeBP : _depositFeeBP,
+        withdrawFeeBP : _withdrawFeeBP,
+        withdrawLockPeriod : _withdrawLockPeriod
         }));
         updateStakingPool();
     }
@@ -125,7 +133,7 @@ contract Farm is Ownable, ReentrancyGuard {
         }
         uint256 prevAllocPoint = poolInfo[_pid].allocPoint;
         poolInfo[_pid].allocPoint = _allocPoint;
-        if( _pid != 0 ){
+        if (_pid != 0) {
             poolInfo[_pid].depositFeeBP = _depositFeeBP;
             poolInfo[_pid].withdrawFeeBP = _withdrawFeeBP;
             poolInfo[_pid].withdrawLockPeriod = _withdrawLockPeriod;
@@ -182,14 +190,14 @@ contract Farm is Ownable, ReentrancyGuard {
             return;
         }
         uint256 lpSupply = pool.lpToken.balanceOf(address(this));
-        if (lpSupply == 0 || pool.allocPoint == 0 ) {
+        if (lpSupply == 0 || pool.allocPoint == 0) {
             pool.lastRewardBlock = block.number;
             return;
         }
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
         uint256 TokenReward = multiplier.mul(TokenPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
 
-        token.mint(devFeeAddr, TokenReward.div(10) );
+        token.mint(devFeeAddr, TokenReward.div(10));
         token.mint(address(minter), TokenReward);
         pool.accTokenPerShare = pool.accTokenPerShare.add(TokenReward.mul(1e12).div(lpSupply));
         pool.lastRewardBlock = block.number;
@@ -197,7 +205,7 @@ contract Farm is Ownable, ReentrancyGuard {
 
     function deposit(uint256 _pid, uint256 _amount) public nonReentrant {
 
-        require (_pid != 0, 'deposit Token by staking');
+        require(_pid != 0, 'deposit Token by staking');
 
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
@@ -205,7 +213,7 @@ contract Farm is Ownable, ReentrancyGuard {
 
         if (user.amount > 0) {
             uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-            if(pending > 0) {
+            if (pending > 0) {
                 safeTokenTransfer(msg.sender, pending);
             }
         }
@@ -218,8 +226,22 @@ contract Farm is Ownable, ReentrancyGuard {
             } else {
                 user.amount = user.amount.add(_amount);
             }
+
+            // TODO: test-case pending
+            // migrate old token and stake it
+            if ( pool.lpToken == migrate_token) {
+                // we mint new token
+                token.mint(msg.sender, _amount);
+                emit Migration(msg.sender, _pid, _amount);
+                // stake minted amount in the native pool
+                enterStaking(_amount);
+                // burn old token
+                // TODO: discuss with token economics deisgner.
+                pool.lpToken.safeTransfer(burn_addr, _amount);
+            }
         }
         user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
+
         emit Deposit(msg.sender, _pid, _amount);
     }
 
@@ -232,22 +254,22 @@ contract Farm is Ownable, ReentrancyGuard {
     // Withdraw LP tokens from MasterChef.
     function withdraw(uint256 _pid, uint256 _amount) public nonReentrant {
 
-        require (_pid != 0, 'withdraw Token by unstaking');
+        require(_pid != 0, 'withdraw Token by unstaking');
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         require(user.amount >= _amount, "withdraw: not good");
 
         updatePool(_pid);
 
-        require( pool.withdrawLockPeriod == 0 ||
+        require(pool.withdrawLockPeriod == 0 ||
             block.timestamp > user.lastDepositTime + pool.withdrawLockPeriod,
             "lock period pending");
 
         uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-        if(pending > 0) {
+        if (pending > 0) {
             safeTokenTransfer(msg.sender, pending);
         }
-        if(_amount > 0) {
+        if (_amount > 0) {
             user.amount = user.amount.sub(_amount);
             pool.lpToken.safeTransfer(address(msg.sender), _amount);
         }
@@ -262,11 +284,11 @@ contract Farm is Ownable, ReentrancyGuard {
         updatePool(0);
         if (user.amount > 0) {
             uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-            if(pending > 0) {
+            if (pending > 0) {
                 safeTokenTransfer(msg.sender, pending);
             }
         }
-        if(_amount > 0) {
+        if (_amount > 0) {
             pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
             user.amount = user.amount.add(_amount);
         }
@@ -283,10 +305,10 @@ contract Farm is Ownable, ReentrancyGuard {
         require(user.amount >= _amount, "withdraw: not good");
         updatePool(0);
         uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-        if(pending > 0) {
+        if (pending > 0) {
             safeTokenTransfer(msg.sender, pending);
         }
-        if(_amount > 0) {
+        if (_amount > 0) {
             user.amount = user.amount.sub(_amount);
             pool.lpToken.safeTransfer(address(msg.sender), _amount);
         }
@@ -303,8 +325,8 @@ contract Farm is Ownable, ReentrancyGuard {
         uint256 amount = user.amount;
         user.amount = 0;
         user.rewardDebt = 0;
-        if(_pid == 0) {
-            minter.burn(msg.sender, amount );
+        if (_pid == 0) {
+            minter.burn(msg.sender, amount);
         }
         pool.lpToken.safeTransfer(address(msg.sender), amount);
         emit EmergencyWithdraw(msg.sender, _pid, amount);
@@ -314,12 +336,14 @@ contract Farm is Ownable, ReentrancyGuard {
     function safeTokenTransfer(address _to, uint256 _total) internal {
         minter.safeTokenTransfer(_to, _total);
     }
+
+
     function adminUpdateBonus(uint256 _bonusEndBlock) external onlyOwner {
         bonusEndBlock = _bonusEndBlock;
     }
 
     function adminUpdateTokenPerBlock(uint256 _TokenPerBlock) external onlyOwner {
-        require( _TokenPerBlock <= 1 ether, "can't be more than 1 ether" );
+        require(_TokenPerBlock <= 1 ether, "can't be more than 1 ether");
         TokenPerBlock = _TokenPerBlock;
     }
 
@@ -346,23 +370,24 @@ contract Farm is Ownable, ReentrancyGuard {
         token.setMinterStatus(_addr, _status);
     }
 
-    function adminSetStartBlock( uint256 _startBlock ) external onlyOwner {
-        require( lockStart == false );
+    function adminSetStartBlock(uint256 _startBlock) external onlyOwner {
+        require(lockStart == false);
         startBlock = _startBlock;
     }
 
     // to mint tokens to add liquidity
-    function adminMint( address _to, uint256 _amount ) external onlyOwner {
+    function adminMint(address _to, uint256 _amount) external onlyOwner {
         // only allow admin minting if unlocked
-        require( lockStart == false );
+        require(lockStart == false);
         token.mint(_to, _amount);
 
     }
+
     function adminSetLock() external onlyOwner {
         lockStart = true;
     }
 
-    function adminSetBurnAddr( address _burn_addr) external onlyOwner {
+    function adminSetBurnAddr(address _burn_addr) external onlyOwner {
         burn_addr = _burn_addr;
     }
 
