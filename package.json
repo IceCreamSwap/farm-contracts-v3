@@ -18,7 +18,9 @@
     "dev:weth": "truffle migrate --f 5 --to 5 --network dev --reset",
     "dev:router": "truffle migrate --f 6 --to 6 --network dev --reset",
     "migrate": "truffle migrate --network dev --reset",
-    "compile": "truffle compile --network dev"
+    "compile": "truffle compile --network dev",
+    "dev:test:farm": "truffle test test/Farm.test.js --network dev --bail",
+    "test": "truffle migrate --network dev --f 3 --to 3 && nodemon --exec yarn dev:test:farm -e sol,js"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^3.2.0",

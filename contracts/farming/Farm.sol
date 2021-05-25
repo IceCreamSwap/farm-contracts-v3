@@ -74,7 +74,9 @@ contract Farm is Ownable, ReentrancyGuard {
         allocPoint : 1000,
         lastRewardBlock : startBlock,
         accTokenPerShare : 0,
-        depositFeeBP : 0
+        depositFeeBP : 0,
+        withdrawFeeBP : 0,
+        withdrawLockPeriod : 0
         }));
 
         totalAllocPoint = 1000;
