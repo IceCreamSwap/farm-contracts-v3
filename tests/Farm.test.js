@@ -1,18 +1,20 @@
 const web3 = require('web3');
 const {accounts, contract} = require('@openzeppelin/test-environment');
-const {BN, expectRevert, token, expectEvent, constants} = require('@openzeppelin/test-helpers');
+const {BN, expectRevert, time, expectEvent, constants} = require('@openzeppelin/test-helpers');
 const {expect} = require('chai');
 
 const Farm = contract.fromArtifact('Farm');
 const Token = contract.fromArtifact('Token');
 const TokenMinter = contract.fromArtifact('TokenMinter');
 const FaucetERC20 = contract.fromArtifact('FaucetERC20');
+
+const mintAmount = '100';
 const MINTED = web3.utils.toWei(mintAmount);
 let tokenPerBlock;
-let busdPerBlock;
 const DEAD_ADDR = '0x000000000000000000000000000000000000dEaD';
 let lpToken; // = this.LP1.address;
-
+let tax = '100'; // 10%
+let dev, user, taxTo;
 function hours(total) {
     return parseInt(60 * 60 * total);
 }
@@ -29,62 +31,96 @@ describe('Farm test-cases', async function () {
     beforeEach(async function () {
         dev = accounts[0];
         user = accounts[1];
-        busdWallet = accounts[2];
+        taxTo = accounts[2];
         tokenPerBlock = web3.utils.toWei('1');
-        busdPerBlock = web3.utils.toWei('1');
-        this.token = await Token.new({from: dev});
+        this.token = await Token.new('Token','Token', {from: dev});
         this.LP1 = await FaucetERC20.new("LP1", "LP1", MINTED, {from: dev});
-        this.BUSD = await FaucetERC20.new("BUSD", "BUSD", MINTED, {from: busdWallet});
-        this.minter = await TokenMinter.new({from: dev});
+        this.migrate_token = await FaucetERC20.new("Old", "Old", MINTED, {from: dev});
+        this.minter = await TokenMinter.new(
+            this.token.address, taxTo, tax,
+            "Minter","Minter",
+            {from: dev});
         lpToken = this.LP1.address;
         await this.token.mint(dev, MINTED, {from: dev});
 
-        const startBlock = (await token.latestBlock()).toString();
+        const startBlock = (await time.latestBlock()).toString();
         // console.log('startBlock', startBlock);
         this.master = await Farm.new(
             this.token.address,
-            this.BUSD.address,
+            this.minter.address,
             dev,
-            busdWallet,
             tokenPerBlock,
-            busdPerBlock,
-            startBlock, {from: dev});
+            startBlock,
+            this.migrate_token.address,
+            {from: dev});
         await this.token.transferOwnership(this.master.address, {from: dev});
         await this.minter.transferOwnership(this.master.address, {from: dev});
     });
 
 
-
-    describe('CONTRACT MANAGEMENT SECURITY', async function () {
+    describe('contract security', async function () {
         const pid = 0;
-        it('updateTokenPerBlock', async function () {
-            await expectRevert(this.master.updateTokenPerBlock(tokenPerBlock, {from: user}), 'Ownable: caller is not the owner');
-            await this.master.updateTokenPerBlock(tokenPerBlock, {from: dev});
+
+        it('adminUpdateBonus', async function () {
+            await expectRevert(this.master.adminUpdateBonus(0, {from: user}), 'Ownable: caller is not the owner');
+            await this.master.adminUpdateBonus(0, {from: dev});
         });
-        it('updateMultiplier', async function () {
-            await expectRevert(this.master.updateMultiplier('1', {from: user}), 'Ownable: caller is not the owner');
-            await this.master.updateMultiplier('1', {from: dev});
+        it('adminUpdateTokenPerBlock', async function () {
+            await expectRevert(this.master.adminUpdateTokenPerBlock(tokenPerBlock, {from: user}), 'Ownable: caller is not the owner');
+            await this.master.adminUpdateTokenPerBlock(tokenPerBlock, {from: dev});
         });
+        it('adminSetDevFeeAddr', async function () {
+            await expectRevert(this.master.adminSetDevFeeAddr(dev, {from: user}), 'Ownable: caller is not the owner');
+            await this.master.adminSetDevFeeAddr(dev, {from: dev});
+        });
+        it('adminSetTaxAddr', async function () {
+            await expectRevert(this.master.adminSetTaxAddr(dev, {from: user}), 'Ownable: caller is not the owner');
+            await this.master.adminSetTaxAddr(dev, {from: dev});
+        });
+        it('adminSetTax', async function () {
+            await expectRevert(this.master.adminSetTax(0, {from: user}), 'Ownable: caller is not the owner');
+            await this.master.adminSetTax(0, {from: dev});
+        });
+        it('adminSetWhiteList', async function () {
+            await expectRevert(this.master.adminSetWhiteList(dev, true, {from: user}), 'Ownable: caller is not the owner');
+            await this.master.adminSetWhiteList(dev, true, {from: dev});
+        });
+        it('adminSetMinterStatus', async function () {
+            await expectRevert(this.master.adminSetWhiteList(dev, true, {from: user}), 'Ownable: caller is not the owner');
+            await this.master.adminSetWhiteList(dev, true, {from: dev});
+        });
+        it('adminSetStartBlock', async function () {
+            await expectRevert(this.master.adminSetStartBlock(0, {from: user}), 'Ownable: caller is not the owner');
+            await this.master.adminSetStartBlock(0, {from: dev});
+        });
+        it('adminMint', async function () {
+            await expectRevert(this.master.adminMint(dev, 1, {from: user}), 'Ownable: caller is not the owner');
+            await this.master.adminMint(dev, 1, {from: dev});
+        });
+        it('adminSetBurnAddr', async function () {
+            await expectRevert(this.master.adminSetBurnAddr(dev, {from: user}), 'Ownable: caller is not the owner');
+            await this.master.adminSetBurnAddr(dev, {from: dev});
+        });
+
         it('add', async function () {
-            const allocPoint = 1, burnRate = 0, emergencyBurnRate = 0, lockPeriod = 0, depositBurnRate = 0, secondaryReward = false, withUpdate = true;
-            // add(uint256 _allocPoint, IBEP20 _lpToken, uint256 _burnRate, uint256 _emergencyBurnRate, uint256 _lockPeriod, uint256 _depositBurnRate, bool _withUpdate )
-            await expectRevert(this.master.add(allocPoint, lpToken, burnRate, emergencyBurnRate, lockPeriod, depositBurnRate, secondaryReward, withUpdate, {from: user}),
+            const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
+            await expectRevert(this.master.add(allocPoint, lpToken, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: user}),
                 'Ownable: caller is not the owner');
-            await this.master.add(allocPoint, lpToken, burnRate, emergencyBurnRate, lockPeriod, depositBurnRate, secondaryReward, withUpdate, {from: dev});
+            await this.master.add(allocPoint, lpToken, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: dev});
         });
         it('set', async function () {
-            const allocPoint = 1, burnRate = 0, emergencyBurnRate = 0, lockPeriod = 0, depositBurnRate = 0, secondaryReward = false, withUpdate = true;
-            // set(uint256 _pid, uint256 _allocPoint, uint256 _burnRate, uint256 _emergencyBurnRate, uint256 _lockPeriod, uint256 _depositBurnRate, bool _withUpdate )
-            await expectRevert(this.master.set(pid, allocPoint, burnRate, emergencyBurnRate, lockPeriod, depositBurnRate, secondaryReward, withUpdate, {from: user}),
+            const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
+            await expectRevert(this.master.set(pid, allocPoint, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: user}),
                 'Ownable: caller is not the owner');
-            await this.master.add(pid, lpToken, burnRate, emergencyBurnRate, lockPeriod, depositBurnRate, secondaryReward, withUpdate, {from: dev});
-            await this.master.set(pid, allocPoint, burnRate, emergencyBurnRate, lockPeriod, depositBurnRate, secondaryReward, withUpdate, {from: dev});
+            await this.master.set(pid, allocPoint, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: dev});
         });
+
+
     });
 
 
 
-
+    /*
     describe('user interaction', async function () {
 
         it('deposit', async function () {
@@ -121,15 +157,15 @@ describe('Farm test-cases', async function () {
             const reward_2block = web3.utils.toWei('2');
             const reward_3block = web3.utils.toWei('3');
 
-            await token.advanceBlock();
+            await time.advanceBlock();
             const rewarded_1block = (await this.master.pendingReward(pid, dev, {from: dev}))[0].toString();
             expect(rewarded_1block).to.be.bignumber.equal(reward_1block);
 
-            await token.advanceBlock();
+            await time.advanceBlock();
             const rewarded_2block = (await this.master.pendingReward(pid, dev, {from: dev}))[0].toString();
             expect(rewarded_2block).to.be.bignumber.equal(reward_2block);
 
-            await token.advanceBlock();
+            await time.advanceBlock();
             const rewarded_3block = (await this.master.pendingReward(pid, dev, {from: dev}))[0].toString();
             expect(rewarded_3block).to.be.bignumber.equal(reward_3block);
 
@@ -153,9 +189,9 @@ describe('Farm test-cases', async function () {
             await this.token.approve(this.master.address, deposited, {from: dev});
             const block1 = (await token.latest()).toString();
             await this.master.deposit(pid, deposited, {from: dev});
-            await token.advanceBlock();
-            await token.advanceBlock();
-            await token.advanceBlock();
+            await time.advanceBlock();
+            await time.advanceBlock();
+            await time.advanceBlock();
             const after = parseInt(block1) + parseInt(hours(37)); // 36 hours + 1 hour
             await token.increaseTo( after );
             await this.master.withdraw(pid, deposited, {from: dev});
@@ -234,7 +270,7 @@ describe('Farm test-cases', async function () {
             const tokenRewarded = web3.utils.fromWei(await this.token.balanceOf(dev),'ether').toString();
             expect('102').to.be.equal(parseFloat(tokenRewarded).toFixed(0));
 
-            // await token.advanceBlock();
+            // await time.advanceBlock();
         });
 
         it('emergencyWithdraw - no lock period', async function () {
@@ -264,7 +300,7 @@ describe('Farm test-cases', async function () {
             const tokenRewarded = web3.utils.fromWei(await this.token.balanceOf(dev),'ether').toString();
             expect('100').to.be.equal(parseFloat(tokenRewarded).toFixed(0));
 
-            // await token.advanceBlock();
+            // await time.advanceBlock();
 
         });
 
@@ -294,12 +330,12 @@ describe('Farm test-cases', async function () {
             const tokenRewarded = web3.utils.fromWei(await this.token.balanceOf(dev),'ether').toString();
             expect('100').to.be.equal(parseFloat(tokenRewarded).toFixed(0));
 
-            // await token.advanceBlock();
+            // await time.advanceBlock();
 
         });
 
     });
-
+    */
 
 
 });

@@ -19,11 +19,12 @@
     "dev:router": "truffle migrate --f 6 --to 6 --network dev --reset",
     "migrate": "truffle migrate --network dev --reset",
     "compile": "truffle compile --network dev",
-    "dev:test:farm": "truffle test test/Farm.test.js --network dev --bail",
+    "dev:test:farm": "truffle test tests/Farm.test.js --network dev --bail",
     "test": "truffle migrate --network dev --f 3 --to 3 && nodemon --exec yarn dev:test:farm -e sol,js"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^3.2.0",
+    "@openzeppelin/test-environment": "^0.1.9",
     "@openzeppelin/test-helpers": "^0.5.6",
     "@truffle/hdwallet-provider": "^1.4.0",
     "chai": "^4.2.0",
