@@ -18,6 +18,7 @@ contract Farm is Ownable, ReentrancyGuard {
     struct UserInfo {
         uint256 amount;
         uint256 rewardDebt;
+        uint256 lastDepositTime;
     }
     struct PoolInfo {
         IERC20 lpToken;
@@ -25,6 +26,8 @@ contract Farm is Ownable, ReentrancyGuard {
         uint256 lastRewardBlock;
         uint256 accTokenPerShare;
         uint16 depositFeeBP;
+        uint16 withdrawFeeBP;
+        uint16 withdrawLockPeriod;
     }
 
     Token public immutable token;
@@ -39,6 +42,8 @@ contract Farm is Ownable, ReentrancyGuard {
     uint256 public totalAllocPoint = 0;
     uint256 public startBlock;
     bool lockStart;
+
+    address burn_addr = address(0x000000000000000000000000000000000000dEaD);
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
@@ -80,8 +85,14 @@ contract Farm is Ownable, ReentrancyGuard {
         require(poolExistence[_lpToken] == false, "nonDuplicated: duplicated");
         _;
     }
-    function add(uint256 _allocPoint, IERC20 _lpToken, uint16 _depositFeeBP, bool _withUpdate) public onlyOwner nonDuplicated(_lpToken) {
+    function add(uint256 _allocPoint, IERC20 _lpToken,
+        uint16 _depositFeeBP,
+        uint16 _withdrawFeeBP,
+        uint16 _withdrawLockPeriod,
+        bool _withUpdate) public onlyOwner nonDuplicated(_lpToken) {
         require(_depositFeeBP <= 1000, "add: invalid deposit fee basis points");
+        require(_withdrawFeeBP <= 1000, "add: invalid withdraw fee basis points");
+        require(_withdrawLockPeriod <= 2764800, "add: invalid withdraw lock period");
         if (_withUpdate) {
             massUpdatePools();
         }
@@ -93,13 +104,22 @@ contract Farm is Ownable, ReentrancyGuard {
             allocPoint: _allocPoint,
             lastRewardBlock: lastRewardBlock,
             accTokenPerShare: 0,
-            depositFeeBP: _depositFeeBP
+            depositFeeBP: _depositFeeBP,
+            withdrawFeeBP: _withdrawFeeBP,
+            withdrawLockPeriod: _withdrawLockPeriod
         }));
         updateStakingPool();
     }
 
-    function set(uint256 _pid, uint256 _allocPoint, uint16 _depositFeeBP, bool _withUpdate) public onlyOwner {
+    function set(uint256 _pid, uint256 _allocPoint,
+        uint16 _depositFeeBP,
+        uint16 _withdrawFeeBP,
+        uint16 _withdrawLockPeriod,
+        bool _withUpdate) public onlyOwner {
         require(_depositFeeBP <= 1000, "set: invalid deposit fee basis points");
+        require(_withdrawFeeBP <= 1000, "add: invalid withdraw fee basis points");
+        require(_withdrawLockPeriod <= 2764800, "add: invalid withdraw lock period");
+
         if (_withUpdate) {
             massUpdatePools();
         }
@@ -107,6 +127,8 @@ contract Farm is Ownable, ReentrancyGuard {
         poolInfo[_pid].allocPoint = _allocPoint;
         if( _pid != 0 ){
             poolInfo[_pid].depositFeeBP = _depositFeeBP;
+            poolInfo[_pid].withdrawFeeBP = _withdrawFeeBP;
+            poolInfo[_pid].withdrawLockPeriod = _withdrawLockPeriod;
         }
         if (prevAllocPoint != _allocPoint) {
             totalAllocPoint = totalAllocPoint.sub(prevAllocPoint).add(_allocPoint);
@@ -201,6 +223,12 @@ contract Farm is Ownable, ReentrancyGuard {
         emit Deposit(msg.sender, _pid, _amount);
     }
 
+    function getLockPeriod(address _user, uint256 _pid) public view returns (bool) {
+        PoolInfo storage pool = poolInfo[_pid];
+        UserInfo storage user = userInfo[_pid][_user];
+        return block.timestamp > user.lastDepositTime + pool.withdrawLockPeriod;
+    }
+
     // Withdraw LP tokens from MasterChef.
     function withdraw(uint256 _pid, uint256 _amount) public nonReentrant {
 
@@ -210,6 +238,11 @@ contract Farm is Ownable, ReentrancyGuard {
         require(user.amount >= _amount, "withdraw: not good");
 
         updatePool(_pid);
+
+        require( pool.withdrawLockPeriod == 0 ||
+            block.timestamp > user.lastDepositTime + pool.withdrawLockPeriod,
+            "lock period pending");
+
         uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
         if(pending > 0) {
             safeTokenTransfer(msg.sender, pending);
@@ -281,39 +314,39 @@ contract Farm is Ownable, ReentrancyGuard {
     function safeTokenTransfer(address _to, uint256 _total) internal {
         minter.safeTokenTransfer(_to, _total);
     }
-    function updateBonus(uint256 _bonusEndBlock) external onlyOwner {
+    function adminUpdateBonus(uint256 _bonusEndBlock) external onlyOwner {
         bonusEndBlock = _bonusEndBlock;
     }
 
-    function updateTokenPerBlock(uint256 _TokenPerBlock) external onlyOwner {
+    function adminUpdateTokenPerBlock(uint256 _TokenPerBlock) external onlyOwner {
         require( _TokenPerBlock <= 1 ether, "can't be more than 1 ether" );
         TokenPerBlock = _TokenPerBlock;
     }
 
-    function setDevFeeAddr(address _devFeeAddr) external onlyOwner {
+    function adminSetDevFeeAddr(address _devFeeAddr) external onlyOwner {
         devFeeAddr = _devFeeAddr;
     }
 
     // allow to change tax treasure via timelock
-    function setTaxAddr(address _taxTo) external onlyOwner {
+    function adminSetTaxAddr(address _taxTo) external onlyOwner {
         minter.setTaxAddr(_taxTo);
     }
 
     // allow to change tax via timelock
-    function setTax(uint16 _tax) external onlyOwner {
+    function adminSetTax(uint16 _tax) external onlyOwner {
         minter.setTax(_tax);
     }
 
     // whitelist address (like vaults)
-    function setWhiteList(address _addr, bool _status) external onlyOwner {
+    function adminSetWhiteList(address _addr, bool _status) external onlyOwner {
         minter.setWhiteList(_addr, _status);
     }
 
-    function setMinterStatus(address _addr, bool _status) external onlyOwner {
+    function adminSetMinterStatus(address _addr, bool _status) external onlyOwner {
         token.setMinterStatus(_addr, _status);
     }
 
-    function setStartBlock( uint256 _startBlock ) external onlyOwner {
+    function adminSetStartBlock( uint256 _startBlock ) external onlyOwner {
         require( lockStart == false );
         startBlock = _startBlock;
     }
@@ -325,7 +358,13 @@ contract Farm is Ownable, ReentrancyGuard {
         token.mint(_to, _amount);
 
     }
-    function setLock() external onlyOwner {
+    function adminSetLock() external onlyOwner {
         lockStart = true;
     }
+
+    function adminSetBurnAddr( address _burn_addr) external onlyOwner {
+        burn_addr = _burn_addr;
+    }
+
+
 }
