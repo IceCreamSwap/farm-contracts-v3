@@ -58,6 +58,8 @@ describe('Farm test-cases', async function () {
     });
 
 
+    /*
+    // DONE
     describe('contract security', async function () {
         const pid = 0;
 
@@ -117,39 +119,29 @@ describe('Farm test-cases', async function () {
 
 
     });
+    */
 
-
-
-    /*
-    describe('user interaction', async function () {
-
+    describe('test deposit/withdraw', async function () {
+        const pid = '1', deposited = web3.utils.toWei('100');
+        const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
         it('deposit', async function () {
-            const pid = '0', deposited = web3.utils.toWei('100');
-            const allocPoint = 1, burnRate = 0, emergencyBurnRate = 0, lockPeriod = 0, depositBurnRate = 0, secondaryReward = false, withUpdate = true;
-            await this.master.add(allocPoint, lpToken, burnRate, emergencyBurnRate, lockPeriod, depositBurnRate, secondaryReward, withUpdate, {from: dev});
+            await this.master.add(allocPoint, lpToken, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: dev});
             await this.LP1.approve(this.master.address, deposited, {from: dev});
             await this.master.deposit(pid, deposited, {from: dev});
             const userInfo = await this.master.userInfo(pid, dev, {from: dev});
-            const pendingReward = (await this.master.pendingReward(pid, dev, {from: dev}));
-            const tokenPendingReward = pendingReward[0].toString();
-            const busdPendingReward = pendingReward[1].toString();
-            // console.log('pendingReward', tokenPendingReward, busdPendingReward)
+            const pendingToken = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
             const amount = userInfo.amount.toString();
             const rewardDebt = userInfo.rewardDebt.toString();
-            const lastDepositToken = parseInt(userInfo.lastDepositToken.toString());
 
             // all must be 0 here
             expect(amount).to.be.equal(deposited);
             expect(rewardDebt).to.be.equal('0');
-            expect(tokenPendingReward).to.be.equal('0');
-            expect(busdPendingReward).to.be.equal('0');
+            expect(pendingToken).to.be.equal('0');
 
         });
 
         it('reward', async function () {
-            const pid = '0', deposited = web3.utils.toWei('100');
-            const allocPoint = 1, burnRate = 0, emergencyBurnRate = 0, lockPeriod = 0, depositBurnRate = 0, secondaryReward = false, withUpdate = true;
-            await this.master.add(allocPoint, lpToken, burnRate, emergencyBurnRate, lockPeriod, depositBurnRate, secondaryReward, withUpdate, {from: dev});
+            await this.master.add(allocPoint, lpToken, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: dev});
             await this.LP1.approve(this.master.address, deposited, {from: dev});
             await this.master.deposit(pid, deposited, {from: dev});
 
@@ -158,18 +150,56 @@ describe('Farm test-cases', async function () {
             const reward_3block = web3.utils.toWei('3');
 
             await time.advanceBlock();
-            const rewarded_1block = (await this.master.pendingReward(pid, dev, {from: dev}))[0].toString();
+            const rewarded_1block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
             expect(rewarded_1block).to.be.bignumber.equal(reward_1block);
 
             await time.advanceBlock();
-            const rewarded_2block = (await this.master.pendingReward(pid, dev, {from: dev}))[0].toString();
+            const rewarded_2block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
             expect(rewarded_2block).to.be.bignumber.equal(reward_2block);
 
             await time.advanceBlock();
-            const rewarded_3block = (await this.master.pendingReward(pid, dev, {from: dev}))[0].toString();
+            const rewarded_3block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
             expect(rewarded_3block).to.be.bignumber.equal(reward_3block);
 
         });
+        it('withdraw LP & reward', async function () {
+            await this.master.add(allocPoint, lpToken, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: dev});
+            await this.LP1.approve(this.master.address, deposited, {from: dev});
+            await this.master.deposit(pid, deposited, {from: dev});
+
+
+            const reward_1block = web3.utils.toWei('1');
+            const reward_2block = web3.utils.toWei('2');
+            const reward_3block = web3.utils.toWei('3');
+
+            await time.advanceBlock();
+            const rewarded_1block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
+            expect(rewarded_1block).to.be.bignumber.equal(reward_1block);
+
+            await time.advanceBlock();
+            const rewarded_2block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
+            expect(rewarded_2block).to.be.bignumber.equal(reward_2block);
+
+            await time.advanceBlock();
+            const rewarded_3block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
+            expect(rewarded_3block).to.be.bignumber.equal(reward_3block);
+
+            await this.master.withdraw(pid, deposited, {from: dev});
+
+            const balanceOf = await this.LP1.balanceOf(dev, {from: dev});
+            expect(balanceOf).to.be.bignumber.equal(deposited);
+
+            const reward = web3.utils.toWei('104'); // 100 minted + 4 rewarded
+            const balanceOfReward = await this.token.balanceOf(dev, {from: dev});
+            expect(reward).to.be.bignumber.equal(balanceOfReward);
+
+        });
+    } );
+
+    /*
+    describe('user interaction', async function () {
+
+
 
 
         it('DEPOSIT TOKEN / EARN TOKEN / on WITHDRAW / AFTER PERIOD / BURN 100% TOKEN', async function () {
