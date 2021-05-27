@@ -31,13 +31,13 @@ describe('Farm test-cases', async function () {
     beforeEach(async function () {
         dev = accounts[0];
         user = accounts[1];
-        taxTo = accounts[2];
+        devFeeAddr = accounts[2];
         tokenPerBlock = web3.utils.toWei('1');
         this.token = await Token.new('Token','Token', {from: dev});
         this.LP1 = await FaucetERC20.new("LP1", "LP1", MINTED, {from: dev});
         this.migrate_token = await FaucetERC20.new("Old", "Old", MINTED, {from: dev});
         this.minter = await TokenMinter.new(
-            this.token.address, taxTo, tax,
+            this.token.address, devFeeAddr, tax,
             "Minter","Minter",
             {from: dev});
         lpToken = this.LP1.address;
@@ -48,7 +48,7 @@ describe('Farm test-cases', async function () {
         this.master = await Farm.new(
             this.token.address,
             this.minter.address,
-            dev,
+            devFeeAddr,
             tokenPerBlock,
             startBlock,
             this.migrate_token.address,
@@ -121,6 +121,7 @@ describe('Farm test-cases', async function () {
     });
     */
 
+    /*
     describe('test deposit/withdraw', async function () {
         const pid = '1', deposited = web3.utils.toWei('100');
         const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
@@ -192,6 +193,40 @@ describe('Farm test-cases', async function () {
             const reward = web3.utils.toWei('104'); // 100 minted + 4 rewarded
             const balanceOfReward = await this.token.balanceOf(dev, {from: dev});
             expect(reward).to.be.bignumber.equal(balanceOfReward);
+
+        });
+    } );
+    */
+
+
+    describe('test deposit/withdraw with fees', async function () {
+        const pid = '1', deposited = web3.utils.toWei('100');
+        const allocPoint = 1, depositFeeBP = 1000, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
+        it('deposit w/ 10% fee', async function () {
+            await this.master.add(allocPoint, lpToken, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: dev});
+            await this.LP1.approve(this.master.address, deposited, {from: dev});
+            await this.master.deposit(pid, deposited, {from: dev});
+
+            await time.advanceBlock();
+            const rewarded_1block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
+            expect( fromWei(rewarded_1block) ).to.be.equal('0.99999999999');
+
+            await time.advanceBlock();
+            const rewarded_2block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
+            expect( fromWei(rewarded_2block) ).to.be.equal('1.99999999998');
+
+            await time.advanceBlock();
+            const rewarded_3block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
+            expect( fromWei(rewarded_3block) ).to.be.equal('2.99999999997');
+
+            const withdraw = web3.utils.toWei('90');
+            await this.master.withdraw(pid, withdraw, {from: dev});
+
+            const balanceOf = await this.LP1.balanceOf(dev, {from: dev});
+            expect(balanceOf).to.be.bignumber.equal(withdraw);
+
+            const balanceOfReward = await this.token.balanceOf(dev, {from: dev});
+            expect('103.599999999964').to.be.equal( fromWei(balanceOfReward) );
 
         });
     } );
