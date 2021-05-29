@@ -57,6 +57,7 @@ describe('Farm test-cases', async function () {
         await this.minter.transferOwnership(this.master.address, {from: dev});
     });
 
+    /*
     describe('test withdraw before with lock (no reward)', async function () {
         const pid = '1', deposited = web3.utils.toWei('100');
         const allocPoint = 1, depositFeeBP = 1000, withdrawFeeBP = 0, withdrawLockPeriod = 3600, withUpdate = true;
@@ -201,9 +202,14 @@ describe('Farm test-cases', async function () {
 
     });
 
+    */
+
+    /*
     describe('test deposit/withdraw', async function () {
         const pid = '1', deposited = web3.utils.toWei('100');
         const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
+
+
         it('deposit', async function () {
             await this.master.add(allocPoint, lpToken, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: dev});
             await this.LP1.approve(this.master.address, deposited, {from: dev});
@@ -242,6 +248,7 @@ describe('Farm test-cases', async function () {
             expect(rewarded_3block).to.be.bignumber.equal(reward_3block);
 
         });
+
         it('withdraw LP & reward', async function () {
             await this.master.add(allocPoint, lpToken, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: dev});
             await this.LP1.approve(this.master.address, deposited, {from: dev});
@@ -269,9 +276,8 @@ describe('Farm test-cases', async function () {
             const balanceOf = await this.LP1.balanceOf(dev, {from: dev});
             expect(balanceOf).to.be.bignumber.equal(deposited);
 
-            const reward = web3.utils.toWei('104'); // 100 minted + 4 rewarded
             const balanceOfReward = await this.token.balanceOf(dev, {from: dev});
-            expect(reward).to.be.bignumber.equal(balanceOfReward);
+            expect('103.6').to.be.equal( fromWei(balanceOfReward) );
 
         });
     } );
@@ -307,128 +313,20 @@ describe('Farm test-cases', async function () {
 
         });
     } );
+    */
 
-    describe('user interaction', async function () {
-
-
-
-
-        it('DEPOSIT TOKEN / EARN TOKEN / on WITHDRAW / AFTER PERIOD / BURN 100% TOKEN', async function () {
-            const LP = this.token.address;
-            const pid = '0', allocPoint = '1', secondaryReward = false, withUpdate = true;
-            deposited = web3.utils.toWei('100');
-            const lockPeriod = hours(36);
-            const burnRate = '10000'; // 0%
-            const emergencyBurnRate = '10000'; // 100%
-            const depositBurnRate = 0;
-            // add(uint256 _allocPoint, IBEP20 _lpToken, uint256 _burnRate, uint256 _emergencyBurnRate, uint256 _lockPeriod, uint256 _depositBurnRate, bool _withUpdate )
-            await this.master.add(allocPoint, LP, burnRate, emergencyBurnRate, lockPeriod, depositBurnRate, secondaryReward, withUpdate, {from: dev});
-
-            const balanceOfToken1 = await this.token.balanceOf(dev);
-            expect(balanceOfToken1).to.be.bignumber.equal(MINTED);
-
-            await this.token.approve(this.master.address, deposited, {from: dev});
-            const block1 = (await token.latest()).toString();
-            await this.master.deposit(pid, deposited, {from: dev});
-            await time.advanceBlock();
-            await time.advanceBlock();
-            await time.advanceBlock();
-            const after = parseInt(block1) + parseInt(hours(37)); // 36 hours + 1 hour
-            await token.increaseTo( after );
-            await this.master.withdraw(pid, deposited, {from: dev});
-            const block2 = (await token.latest()).toString();
-            const poolInfo = await this.master.poolInfo(pid, {from: dev} );
-            // 2 blocks only, 25% must be burned, user get 75% and no Token reward
-            const balanceOfTokenLP = web3.utils.fromWei(await this.token.balanceOf(dev),'ether').toString();
-            const balanceOfTokenBurned = web3.utils.fromWei(await this.token.balanceOf(DEAD_ADDR),'ether').toString();
-            expect(balanceOfTokenLP).to.be.bignumber.equal('0');
-            expect(balanceOfTokenBurned).to.be.bignumber.equal('100');
-
-            // PRINCIPAL + 5 AS REWARD (we advanced block).
-            const REWARDED = '105';
-            const balanceOfToken = web3.utils.fromWei(await this.token.balanceOf(dev),'ether').toString();
-            expect(parseFloat(balanceOfToken).toFixed(0)).to.be.equal(REWARDED);
-
-
-        });
-
-
-        it('DEPOSIT TOKEN / EARN TOKEN / on WITHDRAW / BRUN 25% TOKEN / AFTER LOCK', async function () {
-            const pid_token = '0', deposited = web3.utils.toWei('100');
-            const lockPeriod = hours(36);
-            const burnRate = '2500'; // 25%
-            const emergencyBurnRate = '7500'; // 75%
-            const depositBurnRate = 0;
-            const secondaryReward = false;
-            await this.master.add('100', this.token.address, burnRate, emergencyBurnRate, lockPeriod, depositBurnRate, secondaryReward, true, {from: dev});
-
-            const balanceOfToken1 = await this.token.balanceOf(dev);
-            expect(balanceOfToken1).to.be.bignumber.equal(MINTED);
-
-            await this.token.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid_token, deposited, {from: dev});
-
-            const block1 = (await token.latest()).toString();
-            const after = parseInt(block1) + parseInt(hours(37)); // 36 hours + 1 hour
-            await token.increase( after );
-            await this.master.withdraw(pid_token, deposited, {from: dev});
-
-            // 25% must be burned, user get 75% and no Token reward
-            const balanceOfTokenLP = web3.utils.fromWei(await this.token.balanceOf(dev),'ether').toString();
-            const balanceOfTokenBurned = web3.utils.fromWei(await this.token.balanceOf(DEAD_ADDR),'ether').toString();
-            expect(balanceOfTokenLP).to.be.bignumber.equal('75');
-            expect(balanceOfTokenBurned).to.be.bignumber.equal('25'); // user balance + reward
-
-            // no token reward
-            const balanceOfToken = web3.utils.fromWei(await this.token.balanceOf(dev),'ether').toString();
-            const balance_plus_rewarded = web3.utils.toWei('102');
-            expect(parseFloat(balanceOfToken).toFixed(0)).to.be.equal(web3.utils.fromWei(balance_plus_rewarded,'ether').toString());
-        });
-
-        it('withdraw token before - no lock period', async function () {
-            const pid = '0', deposited = web3.utils.toWei('100');
-            const lockPeriod = 0;
-            const burnRate = '0'; // 0%
-            const emergencyBurnRate = '0'; // 0%
-            const depositBurnRate = 0;
-            const secondaryReward = false;
-            await this.master.add('100', this.LP1.address, burnRate, emergencyBurnRate, lockPeriod, depositBurnRate, secondaryReward, true, {from: dev});
-
-            const balanceOfToken1 = await this.token.balanceOf(dev);
-            expect(balanceOfToken1).to.be.bignumber.equal(MINTED);
-
-
-            await this.LP1.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
-            await token.increase(5);
-            await this.master.withdraw(pid, deposited, {from: dev});
-
-            // 2 blocks only, 100% must be burned, user get 0% and Token reward
-            const balanceOfLP = web3.utils.fromWei(await this.LP1.balanceOf(dev),'ether').toString();
-            expect(balanceOfLP).to.be.bignumber.equal('100');
-
-            // no token reward
-            const tokenRewarded = web3.utils.fromWei(await this.token.balanceOf(dev),'ether').toString();
-            expect('102').to.be.equal(parseFloat(tokenRewarded).toFixed(0));
-
-            // await time.advanceBlock();
-        });
-
+    describe('emergencyWithdraw', async function () {
+        const pid = '1', deposited = web3.utils.toWei('100');
+        const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
         it('emergencyWithdraw - no lock period', async function () {
-            const pid = '0', deposited = web3.utils.toWei('100');
-            const lockPeriod = 0;
-            const burnRate = '0'; // 0%
-            const emergencyBurnRate = '0'; // 0%
-            const depositBurnRate = 0;
-            const secondaryReward = false;
-            await this.master.add('100', this.LP1.address, burnRate, emergencyBurnRate, lockPeriod, depositBurnRate, secondaryReward, true, {from: dev});
+
+            await this.master.add(allocPoint, lpToken, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: dev});
+            await this.LP1.approve(this.master.address, deposited, {from: dev});
+            await this.master.deposit(pid, deposited, {from: dev});
 
             const balanceOfToken1 = await this.token.balanceOf(dev);
             expect(balanceOfToken1).to.be.bignumber.equal(MINTED);
 
-
-            await this.LP1.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
             await this.master.emergencyWithdraw(pid, {from: dev});
 
             // 2 blocks only, 100% must be burned, user get 0% and Token reward
@@ -441,39 +339,8 @@ describe('Farm test-cases', async function () {
             const tokenRewarded = web3.utils.fromWei(await this.token.balanceOf(dev),'ether').toString();
             expect('100').to.be.equal(parseFloat(tokenRewarded).toFixed(0));
 
-            // await time.advanceBlock();
-
         });
 
-        it('emergencyWithdraw - with lock period', async function () {
-            const pid = '0', deposited = web3.utils.toWei('100');
-            const lockPeriod = 3600;
-            const burnRate = '25'; // 25%
-            const emergencyBurnRate = '75'; // 75%
-            const depositBurnRate = 0;
-            const secondaryReward = false;
-            await this.master.add('100', this.token.address, burnRate, emergencyBurnRate, lockPeriod, depositBurnRate, secondaryReward, true, {from: dev});
-
-            const balanceOfToken1 = await this.token.balanceOf(dev);
-            expect(balanceOfToken1).to.be.bignumber.equal(MINTED);
-
-            await this.token.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
-            await expectRevert(this.master.emergencyWithdraw(pid, {from: dev}),"use withdraw");
-
-            // 2 blocks only, 100% must be burned, user get 0% and Token reward
-            const balanceOfToken = web3.utils.fromWei(await this.token.balanceOf(dev),'ether').toString();
-            const balanceOfTokenBurned = web3.utils.fromWei(await this.token.balanceOf(DEAD_ADDR),'ether').toString();
-            expect(balanceOfToken).to.be.bignumber.equal('0');
-            expect(balanceOfTokenBurned).to.be.bignumber.equal('0');
-
-            // no token reward
-            const tokenRewarded = web3.utils.fromWei(await this.token.balanceOf(dev),'ether').toString();
-            expect('100').to.be.equal(parseFloat(tokenRewarded).toFixed(0));
-
-            // await time.advanceBlock();
-
-        });
 
     });
 
