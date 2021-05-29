@@ -40,6 +40,7 @@ contract Farm is Ownable, ReentrancyGuard {
 
     PoolInfo[] public poolInfo;
     mapping(uint256 => mapping(address => UserInfo)) public userInfo;
+    mapping(address => bool) public whitelistedContracts;
     uint256 public totalAllocPoint = 0;
     uint256 public startBlock;
     bool lockStart;
@@ -205,7 +206,7 @@ contract Farm is Ownable, ReentrancyGuard {
         pool.lastRewardBlock = block.number;
     }
 
-    function deposit(uint256 _pid, uint256 _amount) public nonReentrant {
+    function deposit(uint256 _pid, uint256 _amount) public nonReentrant notContract {
 
         require(_pid != 0, 'deposit Token by staking');
 
@@ -216,7 +217,7 @@ contract Farm is Ownable, ReentrancyGuard {
         if (user.amount > 0) {
             uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
             if (pending > 0 ) {
-                if( pool.withdrawLockPeriod == 0 || block.timestamp > user.lastDepositTime + pool.withdrawLockPeriod ){
+                if( isLocked(msg.sender, _pid) == false ){
                     safeTokenTransfer(msg.sender, pending);
                 }
             }
@@ -244,19 +245,40 @@ contract Farm is Ownable, ReentrancyGuard {
                 pool.lpToken.safeTransfer(burn_addr, _amount);
             }
         }
+
+        user.lastDepositTime = block.timestamp;
         user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
 
         emit Deposit(msg.sender, _pid, _amount);
     }
 
-    function getLockPeriod(address _user, uint256 _pid) public view returns (bool) {
+    function getLockPeriod(address _user, uint256 _pid) public view returns (uint256) {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][_user];
-        return block.timestamp > user.lastDepositTime + pool.withdrawLockPeriod;
+        if( pool.withdrawLockPeriod == 0 ){
+            return 0;
+        }
+        if( user.lastDepositTime == 0 ){
+            return 0;
+        }
+        return user.lastDepositTime + pool.withdrawLockPeriod;
+    }
+    function isLocked(address _user, uint256 _pid) public view returns (bool) {
+        PoolInfo storage pool = poolInfo[_pid];
+        UserInfo storage user = userInfo[_pid][_user];
+        if( pool.withdrawLockPeriod == 0 ){
+            return false;
+        }
+
+        if( block.timestamp > getLockPeriod(_user, _pid) ){
+            return false;
+        }
+
+        return true;
     }
 
     // Withdraw LP tokens from MasterChef.
-    function withdraw(uint256 _pid, uint256 _amount) public nonReentrant {
+    function withdraw(uint256 _pid, uint256 _amount) public nonReentrant notContract {
 
         require(_pid != 0, 'withdraw Token by unstaking');
         PoolInfo storage pool = poolInfo[_pid];
@@ -267,7 +289,7 @@ contract Farm is Ownable, ReentrancyGuard {
 
         uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
         if (pending > 0) {
-            if( pool.withdrawLockPeriod == 0 || block.timestamp > user.lastDepositTime + pool.withdrawLockPeriod ){
+            if( isLocked(msg.sender, _pid) == false ){
                 safeTokenTransfer(msg.sender, pending);
             }
         }
@@ -280,7 +302,7 @@ contract Farm is Ownable, ReentrancyGuard {
     }
 
     // Stake Token tokens to MasterChef
-    function enterStaking(uint256 _amount) public nonReentrant {
+    function enterStaking(uint256 _amount) public nonReentrant notContract {
         PoolInfo storage pool = poolInfo[0];
         UserInfo storage user = userInfo[0][msg.sender];
         updatePool(0);
@@ -301,7 +323,7 @@ contract Farm is Ownable, ReentrancyGuard {
     }
 
     // Withdraw Token tokens from STAKING.
-    function leaveStaking(uint256 _amount) public nonReentrant {
+    function leaveStaking(uint256 _amount) public nonReentrant notContract {
         PoolInfo storage pool = poolInfo[0];
         UserInfo storage user = userInfo[0][msg.sender];
         require(user.amount >= _amount, "withdraw: not good");
@@ -321,7 +343,7 @@ contract Farm is Ownable, ReentrancyGuard {
     }
 
     // Withdraw without caring about rewards. EMERGENCY ONLY.
-    function emergencyWithdraw(uint256 _pid) public nonReentrant {
+    function emergencyWithdraw(uint256 _pid) public nonReentrant notContract {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         uint256 amount = user.amount;
@@ -394,4 +416,30 @@ contract Farm is Ownable, ReentrancyGuard {
     }
 
 
+    function adminSetContractStatus(address _contract, bool _status) external onlyOwner {
+        whitelistedContracts[_contract] = _status;
+    }
+
+    /**
+         * @notice Checks if the msg.sender is a contract or a proxy
+         */
+    modifier notContract() {
+        if( whitelistedContracts[msg.sender] == false ){
+            require(!_isContract(msg.sender), "contract not allowed");
+            require(msg.sender == tx.origin, "proxy contract not allowed");
+        }
+        _;
+    }
+
+    /**
+     * @notice Checks if address is a contract
+     * @dev It prevents contract from being targetted
+     */
+    function _isContract(address addr) internal view returns (bool) {
+        uint256 size;
+        assembly {
+            size := extcodesize(addr)
+        }
+        return size > 0;
+    }
 }

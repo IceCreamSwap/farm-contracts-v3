@@ -5,11 +5,13 @@
 
 const UniswapV2Router02 = artifacts.require('UniswapV2Router02');
 const UniswapV2Factory = artifacts.require('UniswapV2Factory');
-// const WBNB = artifacts.require('WBNB');
+const _WBNB = artifacts.require('WBNB');
 module.exports = async function (deployer, network, accounts) {
     let WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
     if (network == 'dev') {
-        WBNB = '0x0';
+        await deployer.deploy(_WBNB);
+        const _weth = await _WBNB.deployed();
+        WBNB = _weth.address;
     } else if (network == 'testnet') {
         WBNB = '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd';
     }
