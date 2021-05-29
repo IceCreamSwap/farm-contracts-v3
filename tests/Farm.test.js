@@ -136,7 +136,6 @@ describe('Farm test-cases', async function () {
         });
     } );
 
-    /*
     // DONE
     describe('contract security', async function () {
         const pid = 0;
@@ -181,6 +180,10 @@ describe('Farm test-cases', async function () {
             await expectRevert(this.master.adminSetBurnAddr(dev, {from: user}), 'Ownable: caller is not the owner');
             await this.master.adminSetBurnAddr(dev, {from: dev});
         });
+        it('adminSetContractStatus', async function () {
+            await expectRevert(this.master.adminSetContractStatus(dev, true, {from: user}), 'Ownable: caller is not the owner');
+            await this.master.adminSetContractStatus(dev, true, {from: dev});
+        });
 
         it('add', async function () {
             const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
@@ -197,9 +200,7 @@ describe('Farm test-cases', async function () {
 
 
     });
-    */
 
-    /*
     describe('test deposit/withdraw', async function () {
         const pid = '1', deposited = web3.utils.toWei('100');
         const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
@@ -274,9 +275,7 @@ describe('Farm test-cases', async function () {
 
         });
     } );
-    */
 
-/*
     describe('test deposit/withdraw with fees', async function () {
         const pid = '1', deposited = web3.utils.toWei('100');
         const allocPoint = 1, depositFeeBP = 1000, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
@@ -308,8 +307,7 @@ describe('Farm test-cases', async function () {
 
         });
     } );
-*/
-    /*
+
     describe('user interaction', async function () {
 
 
@@ -478,7 +476,6 @@ describe('Farm test-cases', async function () {
         });
 
     });
-    */
 
 
 });
