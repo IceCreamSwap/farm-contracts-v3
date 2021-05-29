@@ -215,8 +215,10 @@ contract Farm is Ownable, ReentrancyGuard {
 
         if (user.amount > 0) {
             uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-            if (pending > 0) {
-                safeTokenTransfer(msg.sender, pending);
+            if (pending > 0 ) {
+                if( pool.withdrawLockPeriod == 0 || block.timestamp > user.lastDepositTime + pool.withdrawLockPeriod ){
+                    safeTokenTransfer(msg.sender, pending);
+                }
             }
         }
         if (_amount > 0) {
@@ -263,13 +265,11 @@ contract Farm is Ownable, ReentrancyGuard {
 
         updatePool(_pid);
 
-        require(pool.withdrawLockPeriod == 0 ||
-            block.timestamp > user.lastDepositTime + pool.withdrawLockPeriod,
-            "lock period pending");
-
         uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
         if (pending > 0) {
-            safeTokenTransfer(msg.sender, pending);
+            if( pool.withdrawLockPeriod == 0 || block.timestamp > user.lastDepositTime + pool.withdrawLockPeriod ){
+                safeTokenTransfer(msg.sender, pending);
+            }
         }
         if (_amount > 0) {
             user.amount = user.amount.sub(_amount);
