@@ -10,7 +10,7 @@ module.exports = async function (deployer, network, accounts) {
     let admin = accounts[0];
     let treasury = accounts[0];
 
-    if (network == 'matic_mainnet') {
+    if (network == 'mainnet') {
         treasury = address[0];
     }
 
@@ -28,6 +28,10 @@ module.exports = async function (deployer, network, accounts) {
     console.log('Farm', FARM_DEPLOYED.address);
 
     await deployer.deploy(Vault, token, receiptToken, masterchef, admin, treasury);
+
+    const VAULT_DEPLOYED = await Vault.deployed();
+    await FARM_DEPLOYED.adminSetContractStatus(VAULT_DEPLOYED.address, true);
+    await FARM_DEPLOYED.adminSetWhiteList(VAULT_DEPLOYED.address, true);
 
 
 };

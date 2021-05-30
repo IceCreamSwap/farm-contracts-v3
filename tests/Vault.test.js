@@ -28,7 +28,7 @@ function toWei(v) {
     return web3.utils.toWei(v).toString();
 }
 
-describe('Farm test-cases', async function () {
+describe('Vault test-cases', async function () {
     beforeEach(async function () {
         dev = accounts[0];
         user = accounts[1];
@@ -64,36 +64,61 @@ describe('Farm test-cases', async function () {
 
     });
 
-    describe('test withdraw before with lock (no reward)', async function () {
-        const pid = '1', deposited = web3.utils.toWei('100');
-        const allocPoint = 1, depositFeeBP = 1000, withdrawFeeBP = 0, withdrawLockPeriod = 3600, withUpdate = true;
-        it('reward must NOT be paid', async function () {
-            await this.master.add(allocPoint, lpToken, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: dev});
-            await this.LP1.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
+    describe('TEST ALLOW VAULT TO FARM', async function () {
+        const deposited = web3.utils.toWei('100');
+        it('must only farm if allowed', async function () {
+            await this.token.approve(this.vault.address, deposited, {from: dev});
+            await expectRevert(this.vault.deposit(deposited, {from: dev}), 'contract not allowed');
+            await this.master.adminSetContractStatus(this.vault.address, true, {from: dev});
+            await this.vault.deposit(deposited, {from: dev});
+        });
+    } );
 
-            await time.advanceBlock();
-            const rewarded_1block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect( fromWei(rewarded_1block) ).to.be.equal('0.99999999999');
+    describe('TEST DEPOSIT/WITHDRAW', async function () {
+        const deposited = web3.utils.toWei('100');
+        it('deposit and withdraw immediately', async function () {
 
-            await time.advanceBlock();
-            const rewarded_2block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect( fromWei(rewarded_2block) ).to.be.equal('1.99999999998');
+            await this.master.adminSetContractStatus(this.vault.address, true, {from: dev});
 
-            await time.advanceBlock();
-            const rewarded_3block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect( fromWei(rewarded_3block) ).to.be.equal('2.99999999997');
+            await this.token.approve(this.vault.address, deposited, {from: dev});
+            await this.vault.deposit(deposited, {from: dev});
 
-            const withdraw = web3.utils.toWei('90');
-            await this.master.withdraw(pid, withdraw, {from: dev});
+            // await time.advanceBlock();
+            // const rewarded_1block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
+            // expect( fromWei(rewarded_1block) ).to.be.equal('0.99999999999');
 
-            const balanceOf = await this.LP1.balanceOf(dev, {from: dev});
-            expect(balanceOf).to.be.bignumber.equal(withdraw);
+            await this.vault.withdrawAll({from: dev});
 
-            const balanceOfReward = await this.token.balanceOf(dev, {from: dev});
-            expect('100').to.be.equal( fromWei(balanceOfReward) ); // no reward paid
+            // -0.1% withdraw fee
+            const balanceOf = await this.token.balanceOf(dev, {from: dev});
+            expect( fromWei(balanceOf) ).to.be.bignumber.equal('99.9');
 
         });
+
+        it('deposit and withdraw +72h after', async function () {
+
+            await this.master.adminSetContractStatus(this.vault.address, true, {from: dev});
+            await this.master.adminSetWhiteList(this.vault.address, true, {from: dev});
+
+            await this.token.approve(this.vault.address, deposited, {from: dev});
+            await this.vault.deposit(deposited, {from: dev});
+
+            await time.advanceBlock();
+            await time.advanceBlock();
+            await time.advanceBlock();
+
+            const threeDays = time.duration.days(3);
+            await time.increase(threeDays);
+
+            await this.vault.harvest({from: dev});
+            await this.vault.withdrawAll({from: dev});
+
+            // advance 3 blocks + one harvest
+            const balanceOf = await this.token.balanceOf(dev, {from: dev});
+            expect( fromWei(balanceOf) ).to.be.equal('104.9');
+
+        });
+
     } );
 
 });

@@ -20,7 +20,9 @@
     "migrate": "truffle migrate --network dev --reset",
     "compile": "truffle compile --network dev",
     "dev:test:farm": "truffle test tests/Farm.test.js --network dev --bail",
-    "test": "truffle migrate --network dev --f 3 --to 3 && nodemon --exec yarn dev:test:farm -e sol,js"
+    "dev:test:vault": "truffle test tests/Vault.test.js --network dev --bail",
+    "test": "truffle migrate --network dev --f 3 --to 3 && nodemon --exec yarn dev:test:farm -e sol,js",
+    "test:vault": "truffle migrate --network dev --f 3 --to 3 && nodemon --exec yarn dev:test:vault -e sol,js"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^3.2.0",

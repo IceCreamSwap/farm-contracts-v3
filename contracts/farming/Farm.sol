@@ -34,6 +34,8 @@ contract Farm is Ownable, ReentrancyGuard {
 
     Token public immutable token;
     TokenMinter public immutable minter;
+    IERC20 public immutable migrate_token;
+
     address public devFeeAddr;
     uint256 public TokenPerBlock;
     uint256 public constant BONUS_MULTIPLIER = 1;
@@ -47,7 +49,6 @@ contract Farm is Ownable, ReentrancyGuard {
     bool lockStart;
 
     address burn_addr = address(0x000000000000000000000000000000000000dEaD);
-    IERC20 migrate_token;
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Migration(address indexed user, uint256 indexed pid, uint256 amount);
@@ -402,8 +403,8 @@ contract Farm is Ownable, ReentrancyGuard {
         burn_addr = _burn_addr;
     }
 
-
     function adminSetContractStatus(address _contract, bool _status) external onlyOwner {
+        // allow a contract to interact with this contract
         whitelistedContracts[_contract] = _status;
     }
 

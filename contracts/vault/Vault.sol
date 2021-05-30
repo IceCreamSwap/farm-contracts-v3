@@ -34,8 +34,8 @@ contract Vault is Ownable, Pausable {
 
     uint256 public constant MAX_PERFORMANCE_FEE = 500; // 5%
     uint256 public constant MAX_CALL_FEE = 100; // 1%
-    uint256 public constant MAX_WITHDRAW_FEE = 100; // 1%
-    uint256 public constant MAX_WITHDRAW_FEE_PERIOD = 72 hours; // 3 days
+    uint256 public constant MAX_WITHDRAW_FEE = 500; // 5%
+    uint256 public constant MAX_WITHDRAW_FEE_PERIOD = 30 days; // 30 days
 
     uint256 public performanceFee = 200; // 2%
     uint256 public callFee = 25; // 0.25%
