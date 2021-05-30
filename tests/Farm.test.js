@@ -13,6 +13,7 @@ const MINTED = web3.utils.toWei(mintAmount);
 let tokenPerBlock;
 const DEAD_ADDR = '0x000000000000000000000000000000000000dEaD';
 let lpToken; // = this.LP1.address;
+let old; // = this.migrate_token.address;
 let tax = '100'; // 10%
 let dev, user, taxTo;
 function hours(total) {
@@ -41,6 +42,7 @@ describe('Farm test-cases', async function () {
             "Minter","Minter",
             {from: dev});
         lpToken = this.LP1.address;
+        old = this.migrate_token.address;
         await this.token.mint(dev, MINTED, {from: dev});
 
         const startBlock = (await time.latestBlock()).toString();
@@ -57,7 +59,33 @@ describe('Farm test-cases', async function () {
         await this.minter.transferOwnership(this.master.address, {from: dev});
     });
 
-    /*
+    describe('MIGRATION', async function () {
+        const pid = '1', deposited = web3.utils.toWei('100');
+        const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
+        it('must migrate and stake', async function () {
+
+            await this.master.add(allocPoint, old, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: dev});
+            // await this.token.approve(this.master.address, deposited, {from: dev});
+            await this.migrate_token.approve(this.master.address, deposited, {from: dev});
+            await this.master.deposit(pid, deposited, {from: dev});
+
+            // balance must be 0 as we burn
+            const balanceOfOldToken = await this.migrate_token.balanceOf(dev);
+            expect(balanceOfOldToken).to.be.bignumber.equal('0');
+
+            // balance must be burned
+            const balanceOfBurnOldToken = await this.migrate_token.balanceOf(DEAD_ADDR);
+            expect(balanceOfBurnOldToken).to.be.bignumber.equal(deposited);
+
+            // must have same amount of token staked
+            const userInfo = await this.master.userInfo('0', dev, {from: dev} );
+            expect(userInfo.amount).to.be.bignumber.equal(deposited);
+
+        });
+
+
+    });
+
     describe('test withdraw before with lock (no reward)', async function () {
         const pid = '1', deposited = web3.utils.toWei('100');
         const allocPoint = 1, depositFeeBP = 1000, withdrawFeeBP = 0, withdrawLockPeriod = 3600, withUpdate = true;
@@ -202,9 +230,6 @@ describe('Farm test-cases', async function () {
 
     });
 
-    */
-
-    /*
     describe('test deposit/withdraw', async function () {
         const pid = '1', deposited = web3.utils.toWei('100');
         const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
@@ -313,7 +338,7 @@ describe('Farm test-cases', async function () {
 
         });
     } );
-    */
+
 
     describe('emergencyWithdraw', async function () {
         const pid = '1', deposited = web3.utils.toWei('100');

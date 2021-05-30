@@ -13,6 +13,7 @@ import "./Token.sol";
 import "./TokenMinter.sol";
 
 contract Farm is Ownable, ReentrancyGuard {
+
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
     struct UserInfo {
@@ -216,65 +217,74 @@ contract Farm is Ownable, ReentrancyGuard {
 
         if (user.amount > 0) {
             uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-            if (pending > 0 ) {
-                if( isLocked(msg.sender, _pid) == false ){
-                    safeTokenTransfer(msg.sender, pending);
-                }
+            if (pending > 0 && isLocked(msg.sender, _pid) == false ) {
+                safeTokenTransfer(msg.sender, pending);
             }
         }
         if (_amount > 0) {
-            pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
-            if (pool.depositFeeBP > 0) {
-                uint256 depositFee = _amount.mul(pool.depositFeeBP).div(10000);
-                pool.lpToken.safeTransfer(devFeeAddr, depositFee);
-                user.amount = user.amount.add(_amount).sub(depositFee);
-            } else {
-                user.amount = user.amount.add(_amount);
-            }
-
             // TODO: test-case pending
             // migrate old token and stake it
             if ( pool.lpToken == migrate_token) {
-                // we mint new token
-                token.mint(msg.sender, _amount);
-                emit Migration(msg.sender, _pid, _amount);
-                // stake minted amount in the native pool
-                enterStaking(_amount);
+
                 // burn old token
                 // TODO: discuss with token economics designer.
-                pool.lpToken.safeTransfer(burn_addr, _amount);
+                pool.lpToken.safeTransferFrom(address(msg.sender), burn_addr, _amount);
+
+                // we mint new token
+                token.mint(address(this), _amount);
+
+                // stake minted amount in the native pool
+                internalEnterStaking( msg.sender, _amount, false);
+                emit Migration(msg.sender, _pid, _amount);
+
+            }else{
+                // standard deposit
+                pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
+                if (pool.depositFeeBP > 0) {
+                    uint256 depositFee = _amount.mul(pool.depositFeeBP).div(10000);
+                    pool.lpToken.safeTransfer(devFeeAddr, depositFee);
+                    user.amount = user.amount.add(_amount).sub(depositFee);
+                } else {
+                    user.amount = user.amount.add(_amount);
+                }
             }
+            user.lastDepositTime = block.timestamp;
         }
-
-        user.lastDepositTime = block.timestamp;
         user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
-
         emit Deposit(msg.sender, _pid, _amount);
     }
 
-    function getLockPeriod(address _user, uint256 _pid) public view returns (uint256) {
-        PoolInfo storage pool = poolInfo[_pid];
-        UserInfo storage user = userInfo[_pid][_user];
-        if( pool.withdrawLockPeriod == 0 ){
-            return 0;
+    /**
+     * @notice Do all staking operations.
+     * @dev Moved to an internal function to allow migration
+     */
+    function internalEnterStaking(address _user, uint256 _amount, bool _doTransfer) internal {
+        PoolInfo storage pool = poolInfo[0];
+        UserInfo storage user = userInfo[0][_user];
+        updatePool(0);
+        if (user.amount > 0) {
+            uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
+            if (pending > 0 && isLocked(_user, 0) == false ) {
+                safeTokenTransfer(_user, pending);
+            }
         }
-        if( user.lastDepositTime == 0 ){
-            return 0;
+        if (_amount > 0) {
+            if( _doTransfer ){
+                // if migration we mint to contract, if not, transfer from user.
+                pool.lpToken.safeTransferFrom(_user, address(this), _amount);
+            }
+            user.amount = user.amount.add(_amount);
         }
-        return user.lastDepositTime + pool.withdrawLockPeriod;
+        user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
+
+        minter.mint(_user, _amount);
+        emit Deposit(_user, 0, _amount);
     }
-    function isLocked(address _user, uint256 _pid) public view returns (bool) {
-        PoolInfo storage pool = poolInfo[_pid];
-        UserInfo storage user = userInfo[_pid][_user];
-        if( pool.withdrawLockPeriod == 0 ){
-            return false;
-        }
 
-        if( block.timestamp > getLockPeriod(_user, _pid) ){
-            return false;
-        }
 
-        return true;
+    // Stake Token tokens to MasterChef
+    function enterStaking(uint256 _amount) public nonReentrant notContract {
+        internalEnterStaking( msg.sender, _amount, true);
     }
 
     // Withdraw LP tokens from MasterChef.
@@ -288,10 +298,8 @@ contract Farm is Ownable, ReentrancyGuard {
         updatePool(_pid);
 
         uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-        if (pending > 0) {
-            if( isLocked(msg.sender, _pid) == false ){
-                safeTokenTransfer(msg.sender, pending);
-            }
+        if (pending > 0 && isLocked(msg.sender, _pid) == false ) {
+            safeTokenTransfer(msg.sender, pending);
         }
         if (_amount > 0) {
             user.amount = user.amount.sub(_amount);
@@ -301,27 +309,6 @@ contract Farm is Ownable, ReentrancyGuard {
         emit Withdraw(msg.sender, _pid, _amount);
     }
 
-    // Stake Token tokens to MasterChef
-    function enterStaking(uint256 _amount) public nonReentrant notContract {
-        PoolInfo storage pool = poolInfo[0];
-        UserInfo storage user = userInfo[0][msg.sender];
-        updatePool(0);
-        if (user.amount > 0) {
-            uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-            if (pending > 0) {
-                safeTokenTransfer(msg.sender, pending);
-            }
-        }
-        if (_amount > 0) {
-            pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
-            user.amount = user.amount.add(_amount);
-        }
-        user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
-
-        minter.mint(msg.sender, _amount);
-        emit Deposit(msg.sender, 0, _amount);
-    }
-
     // Withdraw Token tokens from STAKING.
     function leaveStaking(uint256 _amount) public nonReentrant notContract {
         PoolInfo storage pool = poolInfo[0];
@@ -329,7 +316,7 @@ contract Farm is Ownable, ReentrancyGuard {
         require(user.amount >= _amount, "withdraw: not good");
         updatePool(0);
         uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-        if (pending > 0) {
+        if (pending > 0 && isLocked(msg.sender, 0) == false ) {
             safeTokenTransfer(msg.sender, pending);
         }
         if (_amount > 0) {
@@ -431,6 +418,9 @@ contract Farm is Ownable, ReentrancyGuard {
         _;
     }
 
+
+
+
     /**
      * @notice Checks if address is a contract
      * @dev It prevents contract from being targetted
@@ -441,5 +431,35 @@ contract Farm is Ownable, ReentrancyGuard {
             size := extcodesize(addr)
         }
         return size > 0;
+    }
+
+    function getLockPeriod(address _user, uint256 _pid) public view returns (uint256) {
+        PoolInfo storage pool = poolInfo[_pid];
+        UserInfo storage user = userInfo[_pid][_user];
+        if( pool.withdrawLockPeriod == 0 ){
+            return 0;
+        }
+        if( user.lastDepositTime == 0 ){
+            return 0;
+        }
+        return user.lastDepositTime + pool.withdrawLockPeriod;
+    }
+    function isLocked(address _user, uint256 _pid) public view returns (bool) {
+        PoolInfo storage pool = poolInfo[_pid];
+
+        if( whitelistedContracts[msg.sender] ){
+            // allow vault to auto-compound
+            return false;
+        }
+
+        if( pool.withdrawLockPeriod == 0 ){
+            return false;
+        }
+
+        if( block.timestamp > getLockPeriod(_user, _pid) ){
+            return false;
+        }
+
+        return true;
     }
 }
