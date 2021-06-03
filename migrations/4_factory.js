@@ -1,7 +1,6 @@
 // truffle migrate --f 4 --to 4 --network testnet
 // truffle migrate --f 4 --to 4 --network mainnet
 // truffle run verify UniswapV2Factory --network mainnet
-// truffle run verify 0x72cd52024809b2296428a31c6d928c4166e37725@UniswapV2Factory --network mainnet
 // truffle-flattener UniswapV2Factory.sol > UniswapV2Factory.txt
 
 const UniswapV2Factory = artifacts.require('UniswapV2Factory');

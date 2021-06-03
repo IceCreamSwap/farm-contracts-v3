@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
-import "contracts/interfaces/IFarm.sol";
+import "./interfaces/IFarm.sol";
 pragma solidity 0.6.12;
 
 contract Vault is Ownable, Pausable {

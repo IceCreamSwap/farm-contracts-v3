@@ -1,6 +1,6 @@
-// truffle migrate --f 3 --to 3 --network matic_testnet
-// truffle migrate --f 3 --to 3 --network matic_mainnet
-
+// truffle migrate --f 3 --to 3 --network testnet
+// truffle migrate --f 3 --to 3 --network mainnet
+// truffle run verify Token Farm TokenMinter FaucetERC20 --network testnet
 const Token = artifacts.require("Token");
 const Farm = artifacts.require("Farm");
 const TokenMinter = artifacts.require("TokenMinter");
@@ -17,7 +17,7 @@ module.exports = async function (deployer, network, accounts) {
     let startBlock;
     let migrate_token;
     if (network == 'mainnet') {
-        startBlock = 14502500; // set block here
+        startBlock; // set block here
         feeTo = '';
         devFeeAddr = '';
         migrate_token = '';
