@@ -48,10 +48,10 @@ module.exports = async function (deployer, network, accounts) {
         return;
     }
 
-    await deployer.deploy(Token, 'VanillaIce', 'Ice');
+    await deployer.deploy(Token, 'Vanilla', 'VANI');
     const TOKEN_DEPLOYED = await Token.deployed();
 
-    await deployer.deploy(TokenMinter, TOKEN_DEPLOYED.address, feeTo, tax, 'Vanilla', 'Vanilla');
+    await deployer.deploy(TokenMinter, TOKEN_DEPLOYED.address, feeTo, tax, 'VanillaShare', 'VSH');
     const MINTER_DEPLOYED = await TokenMinter.deployed();
 
     await deployer.deploy(Farm,

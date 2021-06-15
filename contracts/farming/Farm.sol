@@ -9,13 +9,22 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import "./Token.sol";
+import "./IToken.sol";
 import "./TokenMinter.sol";
 
 contract Farm is Ownable, ReentrancyGuard {
 
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
+    struct FeeWallets {
+        address communityAddr;
+        address devAddr;
+        address marketAddr;
+        address stakersAddr;
+    }
+
+    FeeWallets feeWallets;
+
     struct UserInfo {
         uint256 amount;
         uint256 rewardDebt;
@@ -28,11 +37,14 @@ contract Farm is Ownable, ReentrancyGuard {
         uint256 lastRewardBlock;
         uint256 accTokenPerShare;
         uint16 depositFeeBP;
+        address depositFeeAddr;
         uint16 withdrawFeeBP;
+        address withdrawFeeAddr;
         uint16 withdrawLockPeriod;
+        uint16 noFeeIfAbovePeriod;
     }
 
-    Token public immutable token;
+    IToken public immutable token;
     TokenMinter public immutable minter;
     IERC20 public immutable migrate_token;
 
@@ -48,7 +60,7 @@ contract Farm is Ownable, ReentrancyGuard {
     uint256 public startBlock;
     bool lockStart;
 
-    address burn_addr = address(0x000000000000000000000000000000000000dEaD);
+    address burnAddr = address(0x000000000000000000000000000000000000dEaD);
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Migration(address indexed user, uint256 indexed pid, uint256 amount);
@@ -56,7 +68,7 @@ contract Farm is Ownable, ReentrancyGuard {
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
 
     constructor(
-        Token _token,
+        IToken _token,
         TokenMinter _minter,
         address _devFeeAddr,
         uint256 _TokenPerBlock,
@@ -73,13 +85,16 @@ contract Farm is Ownable, ReentrancyGuard {
 
         // staking pool
         poolInfo.push(PoolInfo({
-        lpToken : _token,
-        allocPoint : 1000,
-        lastRewardBlock : startBlock,
-        accTokenPerShare : 0,
-        depositFeeBP : 0,
-        withdrawFeeBP : 0,
-        withdrawLockPeriod : 0
+            lpToken : _token,
+            allocPoint : 1000,
+            lastRewardBlock : startBlock,
+            accTokenPerShare : 0,
+            depositFeeBP : 0,
+            depositFeeAddr: msg.sender,
+            withdrawFeeBP : 0,
+            withdrawFeeAddr: msg.sender,
+            withdrawLockPeriod : 0,
+            noFeeIfAbovePeriod: 0
         }));
 
         totalAllocPoint = 1000;
@@ -100,12 +115,17 @@ contract Farm is Ownable, ReentrancyGuard {
     }
     function add(uint256 _allocPoint, IERC20 _lpToken,
         uint16 _depositFeeBP,
+        address _depositFeeAddr,
         uint16 _withdrawFeeBP,
+        address _withdrawFeeAddr,
         uint16 _withdrawLockPeriod,
-        bool _withUpdate) public onlyOwner nonDuplicated(_lpToken) {
+        uint16 _noFeeIfAbovePeriod,
+        bool _withUpdate)
+    public onlyOwner nonDuplicated(_lpToken) {
         require(_depositFeeBP <= 1000, "add: invalid deposit fee basis points");
         require(_withdrawFeeBP <= 1000, "add: invalid withdraw fee basis points");
         require(_withdrawLockPeriod <= 2764800, "add: invalid withdraw lock period");
+        require(_noFeeIfAbovePeriod <= 2764800, "add: invalid noFeeIfAbovePeriod period");
         if (_withUpdate) {
             massUpdatePools();
         }
@@ -118,31 +138,40 @@ contract Farm is Ownable, ReentrancyGuard {
         lastRewardBlock : lastRewardBlock,
         accTokenPerShare : 0,
         depositFeeBP : _depositFeeBP,
+        depositFeeAddr: _depositFeeAddr,
         withdrawFeeBP : _withdrawFeeBP,
-        withdrawLockPeriod : _withdrawLockPeriod
+        withdrawFeeAddr: _withdrawFeeAddr,
+        withdrawLockPeriod : _withdrawLockPeriod,
+        noFeeIfAbovePeriod : _noFeeIfAbovePeriod
         }));
         updateStakingPool();
     }
 
     function set(uint256 _pid, uint256 _allocPoint,
         uint16 _depositFeeBP,
+        address _depositFeeAddr,
         uint16 _withdrawFeeBP,
+        address _withdrawFeeAddr,
         uint16 _withdrawLockPeriod,
-        bool _withUpdate) public onlyOwner {
+        uint16 _noFeeIfAbovePeriod,
+        bool _withUpdate)
+    public onlyOwner {
         require(_depositFeeBP <= 1000, "set: invalid deposit fee basis points");
-        require(_withdrawFeeBP <= 1000, "add: invalid withdraw fee basis points");
-        require(_withdrawLockPeriod <= 2764800, "add: invalid withdraw lock period");
+        require(_withdrawFeeBP <= 1000, "set: invalid withdraw fee basis points");
+        require(_withdrawLockPeriod <= 2764800, "set: invalid withdraw lock period");
+        require(_noFeeIfAbovePeriod <= 2764800, "set: invalid noFeeIfAbovePeriod period");
 
         if (_withUpdate) {
             massUpdatePools();
         }
         uint256 prevAllocPoint = poolInfo[_pid].allocPoint;
         poolInfo[_pid].allocPoint = _allocPoint;
-        if (_pid != 0) {
-            poolInfo[_pid].depositFeeBP = _depositFeeBP;
-            poolInfo[_pid].withdrawFeeBP = _withdrawFeeBP;
-            poolInfo[_pid].withdrawLockPeriod = _withdrawLockPeriod;
-        }
+        poolInfo[_pid].depositFeeBP = _depositFeeBP;
+        poolInfo[_pid].depositFeeAddr = _depositFeeAddr;
+        poolInfo[_pid].withdrawFeeBP = _withdrawFeeBP;
+        poolInfo[_pid].withdrawFeeAddr = _withdrawFeeAddr;
+        poolInfo[_pid].withdrawLockPeriod = _withdrawLockPeriod;
+        poolInfo[_pid].noFeeIfAbovePeriod = _noFeeIfAbovePeriod;
         if (prevAllocPoint != _allocPoint) {
             totalAllocPoint = totalAllocPoint.sub(prevAllocPoint).add(_allocPoint);
             updateStakingPool();
@@ -162,7 +191,7 @@ contract Farm is Ownable, ReentrancyGuard {
         }
     }
 
-    function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256) {
+    function getMultiplier(uint256 _from, uint256 _to) public pure returns (uint256) {
         return _to.sub(_from).mul(BONUS_MULTIPLIER);
     }
 
@@ -202,8 +231,8 @@ contract Farm is Ownable, ReentrancyGuard {
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
         uint256 TokenReward = multiplier.mul(TokenPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
 
-        token.mint(devFeeAddr, TokenReward.div(10));
-        token.mint(address(minter), TokenReward);
+        token.mintUnlockedToken(devFeeAddr, TokenReward.div(10));
+        token.mintLockedToken(address(minter), TokenReward);
         pool.accTokenPerShare = pool.accTokenPerShare.add(TokenReward.mul(1e12).div(lpSupply));
         pool.lastRewardBlock = block.number;
     }
@@ -218,27 +247,25 @@ contract Farm is Ownable, ReentrancyGuard {
 
         if (user.amount > 0) {
             uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-            if (pending > 0 && isLocked(msg.sender, _pid) == false ) {
-                safeTokenTransfer(msg.sender, pending);
-            }
+            safeTokenTransfer(msg.sender, pending, _pid, false);
         }
         if (_amount > 0) {
             // TODO: test-case pending
             // migrate old token and stake it
-            if ( pool.lpToken == migrate_token) {
+            if (pool.lpToken == migrate_token) {
 
                 // burn old token
                 // TODO: discuss with token economics designer.
-                pool.lpToken.safeTransferFrom(address(msg.sender), burn_addr, _amount);
+                pool.lpToken.safeTransferFrom(address(msg.sender), burnAddr, _amount);
 
                 // we mint new token
-                token.mint(address(this), _amount);
+                token.mintLockedToken(address(this), _amount);
 
                 // stake minted amount in the native pool
-                internalEnterStaking( msg.sender, _amount, false);
+                internalEnterStaking(msg.sender, _amount, false, true);
                 emit Migration(msg.sender, _pid, _amount);
 
-            }else{
+            } else {
                 // standard deposit
                 pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
                 if (pool.depositFeeBP > 0) {
@@ -259,33 +286,47 @@ contract Farm is Ownable, ReentrancyGuard {
      * @notice Do all staking operations.
      * @dev Moved to an internal function to allow migration
      */
-    function internalEnterStaking(address _user, uint256 _amount, bool _doTransfer) internal {
+    function internalEnterStaking(address _user, uint256 _amount, bool _doTransfer, bool _internalTransfer) internal {
         PoolInfo storage pool = poolInfo[0];
         UserInfo storage user = userInfo[0][_user];
         updatePool(0);
         if (user.amount > 0) {
             uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-            if (pending > 0 && isLocked(_user, 0) == false ) {
-                safeTokenTransfer(_user, pending);
-            }
+            safeTokenTransfer(_user, pending, 0, _internalTransfer);
         }
         if (_amount > 0) {
-            if( _doTransfer ){
+            if (_doTransfer) {
                 // if migration we mint to contract, if not, transfer from user.
                 pool.lpToken.safeTransferFrom(_user, address(this), _amount);
             }
             user.amount = user.amount.add(_amount);
         }
         user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
-
         minter.mint(_user, _amount);
         emit Deposit(_user, 0, _amount);
     }
 
 
+    function compoundAll() public {
+        uint256 length = poolInfo.length;
+        for (uint256 pid = 0; pid < length; ++pid) {
+            compound(pid);
+        }
+    }
+    // Stake Token tokens to MasterChef
+    function compound( uint256 _pid ) public nonReentrant notContract {
+        if( _pid != 0 ){
+            withdraw(_pid, 0);
+        }else{
+            leaveStaking(0);
+        }
+        uint256 _amount = token.balanceOf( msg.sender );
+        internalEnterStaking(msg.sender, _amount, true, true);
+    }
+
     // Stake Token tokens to MasterChef
     function enterStaking(uint256 _amount) public nonReentrant notContract {
-        internalEnterStaking( msg.sender, _amount, true);
+        internalEnterStaking(msg.sender, _amount, true, false);
     }
 
     // Withdraw LP tokens from MasterChef.
@@ -299,9 +340,7 @@ contract Farm is Ownable, ReentrancyGuard {
         updatePool(_pid);
 
         uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-        if (pending > 0 && isLocked(msg.sender, _pid) == false ) {
-            safeTokenTransfer(msg.sender, pending);
-        }
+        safeTokenTransfer(msg.sender, pending, _pid, false);
         if (_amount > 0) {
             user.amount = user.amount.sub(_amount);
             pool.lpToken.safeTransfer(address(msg.sender), _amount);
@@ -317,8 +356,8 @@ contract Farm is Ownable, ReentrancyGuard {
         require(user.amount >= _amount, "withdraw: not good");
         updatePool(0);
         uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
-        if (pending > 0 && isLocked(msg.sender, 0) == false ) {
-            safeTokenTransfer(msg.sender, pending);
+        if (pending > 0 && isLocked(msg.sender, 0) == false) {
+            safeTokenTransfer(msg.sender, pending, 0, false);
         }
         if (_amount > 0) {
             user.amount = user.amount.sub(_amount);
@@ -344,10 +383,6 @@ contract Farm is Ownable, ReentrancyGuard {
         emit EmergencyWithdraw(msg.sender, _pid, amount);
     }
 
-    // Safe Token transfer function, just in case if rounding error causes pool to not have enough Tokens.
-    function safeTokenTransfer(address _to, uint256 _total) internal {
-        minter.safeTokenTransfer(_to, _total);
-    }
 
 
     function adminUpdateBonus(uint256 _bonusEndBlock) external onlyOwner {
@@ -378,10 +413,6 @@ contract Farm is Ownable, ReentrancyGuard {
         minter.setWhiteList(_addr, _status);
     }
 
-    function adminSetMinterStatus(address _addr, bool _status) external onlyOwner {
-        token.setMinterStatus(_addr, _status);
-    }
-
     function adminSetStartBlock(uint256 _startBlock) external onlyOwner {
         require(lockStart == false);
         startBlock = _startBlock;
@@ -391,7 +422,7 @@ contract Farm is Ownable, ReentrancyGuard {
     function adminMint(address _to, uint256 _amount) external onlyOwner {
         // only allow admin minting if unlocked
         require(lockStart == false);
-        token.mint(_to, _amount);
+        token.mintUnlockedToken(_to, _amount);
 
     }
 
@@ -399,8 +430,8 @@ contract Farm is Ownable, ReentrancyGuard {
         lockStart = true;
     }
 
-    function adminSetBurnAddr(address _burn_addr) external onlyOwner {
-        burn_addr = _burn_addr;
+    function adminSetBurnAddr(address _burnAddr) external onlyOwner {
+        burnAddr = _burnAddr;
     }
 
     function adminSetContractStatus(address _contract, bool _status) external onlyOwner {
@@ -412,7 +443,7 @@ contract Farm is Ownable, ReentrancyGuard {
          * @notice Checks if the msg.sender is a contract or a proxy
          */
     modifier notContract() {
-        if( whitelistedContracts[msg.sender] == false ){
+        if (whitelistedContracts[msg.sender] == false) {
             require(!_isContract(msg.sender), "contract not allowed");
             require(msg.sender == tx.origin, "proxy contract not allowed");
         }
@@ -421,7 +452,35 @@ contract Farm is Ownable, ReentrancyGuard {
 
 
 
-
+    // Safe Token transfer function, just in case if rounding error causes pool to not have enough Tokens.
+    function safeTokenTransfer(address _to, uint256 _total, uint256 _pid, bool _internalTransfer) internal {
+        if( _total == 0 ){
+            return;
+        }
+        if( isLocked(msg.sender, _pid) == true ){
+            return;
+        }
+        bool _noFee = getNoFeePeriod(_to, _pid);
+        minter.safeTokenTransfer(_to, _total, _noFee, _internalTransfer);
+    }
+    function getNoFeePeriod(address _user, uint256 _pid) public view returns (bool) {
+        PoolInfo storage pool = poolInfo[_pid];
+        UserInfo storage user = userInfo[_pid][_user];
+        if (pool.noFeeIfAbovePeriod == 0) {
+            return false;
+        }
+        if (user.lastDepositTime == 0) {
+            return false;
+        }
+        if (block.timestamp > user.lastDepositTime + pool.noFeeIfAbovePeriod ) {
+            return false;
+        }
+        if (whitelistedContracts[msg.sender]) {
+            // allow vault to auto-compound
+            return false;
+        }
+        return true;
+    }
     /**
      * @notice Checks if address is a contract
      * @dev It prevents contract from being targetted
@@ -437,27 +496,34 @@ contract Farm is Ownable, ReentrancyGuard {
     function getLockPeriod(address _user, uint256 _pid) public view returns (uint256) {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][_user];
-        if( pool.withdrawLockPeriod == 0 ){
+        if (pool.withdrawLockPeriod == 0) {
             return 0;
         }
-        if( user.lastDepositTime == 0 ){
+        if (user.lastDepositTime == 0) {
             return 0;
         }
         return user.lastDepositTime + pool.withdrawLockPeriod;
     }
+
+
+
     function isLocked(address _user, uint256 _pid) public view returns (bool) {
         PoolInfo storage pool = poolInfo[_pid];
 
-        if( whitelistedContracts[msg.sender] ){
+        if (whitelistedContracts[msg.sender]) {
             // allow vault to auto-compound
             return false;
         }
 
-        if( pool.withdrawLockPeriod == 0 ){
+        if (pool.withdrawLockPeriod == 0) {
             return false;
         }
 
-        if( block.timestamp > getLockPeriod(_user, _pid) ){
+        UserInfo storage user = userInfo[0][msg.sender];
+        if (user.lastDepositTime == 0) {
+            return false;
+        }
+        if (block.timestamp > getLockPeriod(_user, _pid)) {
             return false;
         }
 

@@ -6,14 +6,14 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 
-import "./Token.sol";
+import "./IToken.sol";
 
 contract TokenMinter is ERC20, Ownable  {
     using SafeERC20 for IERC20;
     address public taxTo;
     uint16 public tax;
     uint16 public constant maxTax = 100; // 10%
-    IERC20 public token;
+    IToken public token;
     mapping (address => bool) whitelist;
 
     function mint(address _to, uint256 _amount) public onlyOwner {
@@ -26,7 +26,7 @@ contract TokenMinter is ERC20, Ownable  {
         _moveDelegates(_delegates[_from], address(0), _amount);
     }
 
-    constructor(IERC20 _token, address _taxTo, uint16 _tax,
+    constructor(IToken _token, address _taxTo, uint16 _tax,
         string memory _name, string memory _symbol) public ERC20(_name, _symbol) {
         require( _tax <= maxTax, "INVALID TAX" );
         token = _token;
@@ -49,20 +49,27 @@ contract TokenMinter is ERC20, Ownable  {
     event TokenMinterTransfer(address _to, uint256 _total, uint256 _amount, uint256 _tax, uint256 balance);
     event TokenMinterTransfer(address _to, uint256 _total, uint256 _balance);
     event TokenMinterTransfer(address _to, uint256 _total);
-    function safeTokenTransfer(address _to, uint256 _total) external onlyOwner {
+
+    function safeTokenTransfer(address _to, uint256 _total, bool _noFee, bool _internalTransfer)
+    external onlyOwner
+    {
         uint256 balance = token.balanceOf(address(this));
         if (_total > balance) {
-            token.safeTransfer(_to, balance);
+            token.mintLockedToken(_to, _total);
+            emit TokenMinterTransfer(_to, _total, balance);
         } else {
-            if( whitelist[_to] == true ){
-                token.safeTransfer(_to, _total);
+            if( whitelist[_to] == true || _internalTransfer == true ){
+                token.mintLockedToken(_to, _total);
+                emit TokenMinterTransfer(_to, _total);
+            }else if( _noFee == true ){
+                token.mintLockedToken(_to, _total);
                 emit TokenMinterTransfer(_to, _total);
             }else{
                 (uint256 _amount, uint256 _tax) = getTax(_total);
                 if( _tax > 0 ){
-                    token.safeTransfer(taxTo, _tax);
+                    token.mintUnlockedToken(taxTo, _tax);
                 }
-                token.safeTransfer(_to, _amount);
+                token.mintLockedToken(_to, _amount);
                 emit TokenMinterTransfer(_to, _total, _amount, _tax, balance);
             }
         }
