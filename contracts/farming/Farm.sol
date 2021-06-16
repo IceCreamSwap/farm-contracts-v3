@@ -67,6 +67,14 @@ contract Farm is Ownable, ReentrancyGuard {
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
 
+    /*
+    event LOG_CALL (bytes4 indexed sig, address indexed caller, bytes data) anonymous;
+    modifier _logs_() {
+        emit LOG_CALL(msg.sig, _msgSender(), _msgData());
+        _;
+    }
+    */
+
     constructor(
         IToken _token,
         TokenMinter _minter,
@@ -266,8 +274,12 @@ contract Farm is Ownable, ReentrancyGuard {
                 emit Migration(msg.sender, _pid, _amount);
 
             } else {
-                // standard deposit
-                pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
+                // prevent Cerberus exploit
+                uint256 oldBalance = pool.lpToken.balanceOf( address(this) ); // 100
+                pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount); // 10
+                uint256 newBalance = pool.lpToken.balanceOf( address(this) ); // 109
+                _amount = newBalance.sub(oldBalance); // 109-100=9
+
                 if (pool.depositFeeBP > 0) {
                     uint256 depositFee = _amount.mul(pool.depositFeeBP).div(10000);
                     pool.lpToken.safeTransfer(devFeeAddr, depositFee);
@@ -418,14 +430,6 @@ contract Farm is Ownable, ReentrancyGuard {
         startBlock = _startBlock;
     }
 
-    // to mint tokens to add liquidity
-    function adminMint(address _to, uint256 _amount) external onlyOwner {
-        // only allow admin minting if unlocked
-        require(lockStart == false);
-        token.mintUnlockedToken(_to, _amount);
-
-    }
-
     function adminSetLock() external onlyOwner {
         lockStart = true;
     }
@@ -504,9 +508,6 @@ contract Farm is Ownable, ReentrancyGuard {
         }
         return user.lastDepositTime + pool.withdrawLockPeriod;
     }
-
-
-
     function isLocked(address _user, uint256 _pid) public view returns (bool) {
         PoolInfo storage pool = poolInfo[_pid];
 
@@ -519,7 +520,7 @@ contract Farm is Ownable, ReentrancyGuard {
             return false;
         }
 
-        UserInfo storage user = userInfo[0][msg.sender];
+        UserInfo storage user = userInfo[_pid][msg.sender];
         if (user.lastDepositTime == 0) {
             return false;
         }
@@ -529,4 +530,6 @@ contract Farm is Ownable, ReentrancyGuard {
 
         return true;
     }
+
+
 }

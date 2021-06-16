@@ -59,19 +59,18 @@ module.exports = async function (deployer, network, accounts) {
         TokenPerBlock, startBlock, migrate_token);
 
     const FARM_DEPLOYED = await Farm.deployed();
-    await TOKEN_DEPLOYED.transferOwnership(Farm.address);
     await MINTER_DEPLOYED.transferOwnership(Farm.address);
 
-    await FARM_DEPLOYED.adminSetMinterStatus(FARM_DEPLOYED.address, true);
-    await FARM_DEPLOYED.adminSetMinterStatus(accounts[0], false);
+    await TOKEN_DEPLOYED.setAuthorizedMintCaller(MINTER_DEPLOYED.address);
+    await TOKEN_DEPLOYED.setAuthorizedMintCaller(accounts[0]);
 
     console.log('Token', TOKEN_DEPLOYED.address);
     console.log('TokenMinter', MINTER_DEPLOYED.address);
     console.log('Farm', FARM_DEPLOYED.address);
 
     const LIQUIDITY = web3.utils.toWei('1');
-    await FARM_DEPLOYED.adminMint(dev, TokenPerBlock); // to test pools
-    await FARM_DEPLOYED.adminMint(feeTo, LIQUIDITY); // any liquidity to lock
+    await TOKEN_DEPLOYED.mintUnlockedToken(dev, TokenPerBlock); // to test pools
+    await TOKEN_DEPLOYED.mintUnlockedToken(feeTo, LIQUIDITY); // any liquidity to lock
 
 
 

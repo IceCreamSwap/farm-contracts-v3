@@ -11,7 +11,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract Vanilla is Context, ERC20, Ownable, IToken, ReentrancyGuard {
+contract Token is Context, ERC20, Ownable, IToken, ReentrancyGuard {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -68,7 +68,8 @@ contract Vanilla is Context, ERC20, Ownable, IToken, ReentrancyGuard {
         _;
     }
 
-    constructor () public ERC20("Vanilla", "VANI") {}
+    constructor ( string memory _name, string memory _symbol )
+    public ERC20(_name, _symbol) {}
 
     function getUnlockFactor(address token) external view override returns (uint256) {
         return _unlockFactor[token];
