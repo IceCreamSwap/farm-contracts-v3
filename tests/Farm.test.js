@@ -62,7 +62,7 @@ describe('Farm test-cases', async function () {
         await this.token.setAuthorizedMintCaller(this.master.address, {from: dev});
         await this.minter.transferOwnership(this.master.address, {from: dev});
     });
-
+/*
     describe('MIGRATION', async function () {
         const pid = '1', deposited = web3.utils.toWei('100');
         const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
@@ -175,11 +175,11 @@ describe('Farm test-cases', async function () {
 
         });
     });
-
+*/
     // DONE
     describe('contract security', async function () {
         const pid = 0;
-
+        /*
         it('adminUpdateBonus', async function () {
             await expectRevert(this.master.adminUpdateBonus(0, {from: user}), 'Ownable: caller is not the owner');
             await this.master.adminUpdateBonus(0, {from: dev});
@@ -228,6 +228,7 @@ describe('Farm test-cases', async function () {
                 'Ownable: caller is not the owner');
             await this.master.add(allocPoint, lpToken, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
         });
+        */
         it('set', async function () {
             const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
             const noFeeIfAbovePeriod = 3600;
@@ -238,7 +239,7 @@ describe('Farm test-cases', async function () {
 
 
     });
-
+    /*
     describe('test deposit/withdraw', async function () {
 
         it('deposit', async function () {
@@ -386,6 +387,6 @@ describe('Farm test-cases', async function () {
 
 
     });
-
+    */
 
 });

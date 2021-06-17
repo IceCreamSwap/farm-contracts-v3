@@ -275,10 +275,10 @@ contract Farm is Ownable, ReentrancyGuard {
 
             } else {
                 // prevent Cerberus exploit
-                uint256 oldBalance = pool.lpToken.balanceOf( address(this) ); // 100
-                pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount); // 10
-                uint256 newBalance = pool.lpToken.balanceOf( address(this) ); // 109
-                _amount = newBalance.sub(oldBalance); // 109-100=9
+                uint256 oldBalance = pool.lpToken.balanceOf( address(this) );
+                pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
+                uint256 newBalance = pool.lpToken.balanceOf( address(this) );
+                _amount = newBalance.sub(oldBalance);
 
                 if (pool.depositFeeBP > 0) {
                     uint256 depositFee = _amount.mul(pool.depositFeeBP).div(10000);
