@@ -16,8 +16,8 @@ import './libraries/SafeMath.sol';
 contract UniswapV2ERC20 {
     using SafeMathUniswap for uint;
 
-    string public constant name = 'Vanilla-LP';
-    string public constant symbol = 'VILP';
+    string public constant name = 'VLPv1'; // VLPv1
+    string public constant symbol = 'VLPv1'; // VLPv1
     uint8 public constant decimals = 18;
     uint  public totalSupply;
     mapping(address => uint) public balanceOf;

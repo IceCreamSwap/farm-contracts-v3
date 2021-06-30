@@ -258,7 +258,6 @@ contract Farm is Ownable, ReentrancyGuard {
             safeTokenTransfer(msg.sender, pending, _pid, false);
         }
         if (_amount > 0) {
-            // TODO: test-case pending
             // migrate old token and stake it
             if (pool.lpToken == migrate_token) {
 
@@ -274,10 +273,14 @@ contract Farm is Ownable, ReentrancyGuard {
                 emit Migration(msg.sender, _pid, _amount);
 
             } else {
-                // prevent Cerberus exploit
+                // security: prevent Cerberus exploit
                 uint256 oldBalance = pool.lpToken.balanceOf( address(this) );
                 pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
                 uint256 newBalance = pool.lpToken.balanceOf( address(this) );
+
+                // security: new balance must be bigger than old or user is trying to exploit
+                require(newBalance >= oldBalance, "invalid deposited amount");
+
                 _amount = newBalance.sub(oldBalance);
 
                 if (pool.depositFeeBP > 0) {

@@ -7,6 +7,7 @@ const Farm = contract.fromArtifact('Farm');
 const Token = contract.fromArtifact('Token');
 const TokenMinter = contract.fromArtifact('TokenMinter');
 const FaucetERC20 = contract.fromArtifact('FaucetERC20');
+const TokneDeflationary = contract.fromArtifact('TokneDeflationary');
 
 const mintAmount = '100';
 const MINTED = web3.utils.toWei(mintAmount);
@@ -37,7 +38,10 @@ describe('Farm test-cases', async function () {
         devFeeAddr = accounts[3];
         withdrawFeeAddr = accounts[4];
         tokenPerBlock = web3.utils.toWei('1');
+
         this.token = await Token.new('Token', 'Token', {from: dev});
+        this.rfi = await TokneDeflationary.new({from: dev});
+
         this.LP1 = await FaucetERC20.new("LP1", "LP1", MINTED, {from: dev});
         this.migrate_token = await FaucetERC20.new("Old", "Old", MINTED, {from: dev});
         this.minter = await TokenMinter.new(
@@ -179,6 +183,35 @@ describe('Farm test-cases', async function () {
     // DONE
     describe('contract security', async function () {
         const pid = 0;
+
+        it('deflationary exploit protection', async function () {
+            const rfi = this.rfi.address;
+            const pid = '1', deposited = web3.utils.toWei('100');
+            const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
+            const noFeeIfAbovePeriod = 0;
+            await this.master.add(allocPoint, rfi, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
+            await this.rfi.approve(this.master.address, deposited, {from: dev});
+            await this.master.deposit(pid, deposited, {from: dev});
+            const userInfo = await this.master.userInfo(pid, dev, {from: dev});
+            const pendingToken = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
+            const amount = userInfo.amount.toString();
+            const rewardDebt = userInfo.rewardDebt.toString();
+
+            // all must be 0 here
+            expect( fromWei(amount) ).to.be.bignumber.equal( '90' );
+            expect(rewardDebt).to.be.equal('0');
+            expect(pendingToken).to.be.equal('0');
+
+            await this.master.withdraw(pid, amount, {from: dev});
+
+            const balanceOf = await this.LP1.balanceOf(dev, {from: dev});
+            expect(balanceOf).to.be.bignumber.equal(amount);
+
+            const balanceOfReward = await this.token.balanceOf(dev, {from: dev});
+            expect(web3.utils.toWei('103.6')).to.be.bignumber.equal(balanceOfReward);
+
+        });
+
         /*
         it('adminUpdateBonus', async function () {
             await expectRevert(this.master.adminUpdateBonus(0, {from: user}), 'Ownable: caller is not the owner');
@@ -228,14 +261,17 @@ describe('Farm test-cases', async function () {
                 'Ownable: caller is not the owner');
             await this.master.add(allocPoint, lpToken, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
         });
-        */
+
         it('set', async function () {
             const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
             const noFeeIfAbovePeriod = 3600;
-            await expectRevert(this.master.set(pid, allocPoint, depositFeeBP, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: user}),
+            await expectRevert(this.master.set(pid, allocPoint, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: user}),
                 'Ownable: caller is not the owner');
-            await this.master.set(pid, allocPoint, depositFeeBP, withdrawFeeBP, withdrawLockPeriod, withUpdate, {from: dev});
+            await this.master.set(pid, allocPoint, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
         });
+         */
+
+
 
 
     });
