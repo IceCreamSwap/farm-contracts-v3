@@ -23,9 +23,9 @@ interface IToken is IERC20 {
     function unstake(address token, uint256 amount) external returns (bool);
     function claimUnlocked(address token) external returns (bool);
 
-    function setAuthorizedMintCaller(address caller) external;
-    function removeAuthorizedMintCaller(address caller) external;
+    function setAuthorizeMintCaller(address caller, bool status) external;
 
     function mintUnlockedToken(address to, uint256 amount) external;
     function mintLockedToken(address to, uint256 amount) external;
+
 }

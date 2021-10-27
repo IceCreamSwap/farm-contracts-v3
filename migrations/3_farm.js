@@ -1,79 +1,85 @@
-// truffle migrate --f 3 --to 3 --network testnet
-// truffle migrate --f 3 --to 3 --network mainnet
-// truffle run verify Token Farm TokenMinter FaucetERC20 --network testnet
+require('dotenv').config()
+// truffle migrate --f 3 --to 3 --network testnet && truffle run verify MasterChef Token --network testnet
+const MasterChef = artifacts.require("Farm");
+const FaucetERC20 = artifacts.require("MockBEP20");
 const Token = artifacts.require("Token");
-const Farm = artifacts.require("Farm");
-const TokenMinter = artifacts.require("TokenMinter");
-const FaucetERC20 = artifacts.require("FaucetERC20");
-
+const CakeToken = artifacts.require("CakeToken");
+const SyrupBar = artifacts.require("SyrupBar");
+const MockMasterChef = artifacts.require("MockMasterChef");
+let TOKEN_MASTER_DEPLOYED;
 module.exports = async function (deployer, network, accounts) {
+    await deploy_token(deployer, network, accounts);
+};
 
-    const dev = accounts[0];
-    const getBlock = await web3.eth.getBlock("latest");
-    const tax = '100'; // %10
-    let feeTo = accounts[0];
-    let devFeeAddr = accounts[0];
-    const TokenPerBlock = web3.utils.toWei('0.5');
+async function deploy_token(deployer, network, accounts) {
+    let tokenPerBlock;
+    const block = await web3.eth.getBlock("latest");
     let startBlock;
-    let migrate_token;
+    let devaddr;
+    const _taxTo = accounts[0];
+    const _tax = 0;
+    let router;
+    let cake;
+    let mc;
     if (network == 'mainnet') {
-        startBlock; // set block here
-        feeTo = '';
-        devFeeAddr = '';
-        migrate_token = '';
+        router = '0x05fF2B0DB69458A0750badebc4f9e13aDd608C7F';
     }
     if (network == 'testnet') {
-        const MINTED = web3.utils.toWei('100');
-        startBlock = getBlock.number;
-        await deployer.deploy(FaucetERC20, 'Old', 'Old', MINTED);
-        const OLD_DEPLOYED = await FaucetERC20.deployed();
-        migrate_token = OLD_DEPLOYED.address;
+        router = '0xf946634f04aa0eD1b935C8B876a0FD535F993D43';
+        tokenPerBlock = web3.utils.toWei('1');
+        devaddr = accounts[0];
+        startBlock = block.number;
+        cake = '0x12c701256bDE096E0dE36a252395F25a077A2E1b';
+        mc = '0x00b4c3AeCcA7c492a45A53af306B69BA35D20847';
     }
+
     if (network == 'dev') {
-        const MINTED = web3.utils.toWei('100');
-        startBlock = getBlock.number;
-        await deployer.deploy(FaucetERC20, 'Old', 'Old', MINTED);
-        const OLD_DEPLOYED = await FaucetERC20.deployed();
-        migrate_token = OLD_DEPLOYED.address;
-    }
+        tokenPerBlock = web3.utils.toWei('1');
+        devaddr = accounts[0];
+        startBlock = block.number;
 
-    if( ! startBlock ){
-        console.error(network, '( ! startBlock )');
+        // await deployer.deploy(FaucetERC20, "Test", "Test", tokenPerBlock);
+        await deployer.deploy(CakeToken);
+        const TOKEN_DEPLOYED = await CakeToken.deployed();
+
+        await deployer.deploy(SyrupBar, TOKEN_DEPLOYED.address);
+        const SYRUP_DEPLOYED = await SyrupBar.deployed();
+
+        await deployer.deploy(MockMasterChef,
+            TOKEN_DEPLOYED.address,
+            SYRUP_DEPLOYED.address,
+            devaddr, tokenPerBlock, startBlock);
+
+        const FARM_DEPLOYED = await MockMasterChef.deployed();
+        await TOKEN_DEPLOYED.transferOwnership(FARM_DEPLOYED.address);
+
+        cake = TOKEN_DEPLOYED.address;
+        mc = FARM_DEPLOYED.address;
+    }
+    if (!startBlock && network != 'dev') {
+        console.log('NO START BLOCK!');
         process.exit(1);
-        return;
     }
-    if( ! migrate_token || ! feeTo || ! devFeeAddr ){
-        console.error(network, '( ! migrate_token || ! feeTo || ! devFeeAddr )');
+    if (!devaddr) {
+        console.log('NO devaddr!');
         process.exit(1);
-        return;
     }
-
-    await deployer.deploy(Token, 'Vanilla', 'VANI');
-    const TOKEN_DEPLOYED = await Token.deployed();
-
-    await deployer.deploy(TokenMinter, TOKEN_DEPLOYED.address, feeTo, tax, 'VanillaShare', 'VSH');
-    const MINTER_DEPLOYED = await TokenMinter.deployed();
-
-    await deployer.deploy(Farm,
-        TOKEN_DEPLOYED.address, MINTER_DEPLOYED.address, devFeeAddr,
-        TokenPerBlock, startBlock, migrate_token);
-
-    const FARM_DEPLOYED = await Farm.deployed();
-    await MINTER_DEPLOYED.transferOwnership(Farm.address);
-
-    await TOKEN_DEPLOYED.setAuthorizedMintCaller(MINTER_DEPLOYED.address);
-    await TOKEN_DEPLOYED.setAuthorizedMintCaller(accounts[0]);
-
-    console.log('Token', TOKEN_DEPLOYED.address);
-    console.log('TokenMinter', MINTER_DEPLOYED.address);
-    console.log('Farm', FARM_DEPLOYED.address);
-
-    const LIQUIDITY = web3.utils.toWei('1');
-    await TOKEN_DEPLOYED.mintUnlockedToken(dev, TokenPerBlock); // to test pools
-    await TOKEN_DEPLOYED.mintUnlockedToken(feeTo, LIQUIDITY); // any liquidity to lock
-
-
-
-    // await FARM_DEPLOYED.transferOwnership(process.env.POOL_MNG);
-
-};
+    if (!cake || !mc) {
+        console.log('(!cake||!mc)');
+        process.exit(1);
+    }
+    await deployer.deploy(Token, _taxTo, _tax);
+    const TOKEN_TOKEN = await Token.deployed();
+    if (network != 'dev') {
+        await TOKEN_TOKEN.init_router(router);
+    }
+    const token = TOKEN_TOKEN.address;
+    await deployer.deploy(
+        MasterChef,
+        token,
+        startBlock,
+        mc, cake);
+    await TOKEN_TOKEN.mintUnlockedToken(devaddr, tokenPerBlock);
+    TOKEN_MASTER_DEPLOYED = await MasterChef.deployed();
+    await TOKEN_TOKEN.setAuthorizeMintCaller(TOKEN_MASTER_DEPLOYED.address, true);
+}

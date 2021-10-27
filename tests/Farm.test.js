@@ -1,22 +1,29 @@
-const web3 = require('web3');
+const chalk = require('chalk');
 const {accounts, contract} = require('@openzeppelin/test-environment');
 const {BN, expectRevert, time, expectEvent, constants} = require('@openzeppelin/test-helpers');
 const {expect} = require('chai');
-
-const Farm = contract.fromArtifact('Farm');
-const Token = contract.fromArtifact('Token');
-const TokenMinter = contract.fromArtifact('TokenMinter');
 const FaucetERC20 = contract.fromArtifact('FaucetERC20');
-const TokneDeflationary = contract.fromArtifact('TokneDeflationary');
+const MockMasterChef = contract.fromArtifact('MockMasterChef');
+const CakeToken = contract.fromArtifact('CakeToken');
+const SyrupBar = contract.fromArtifact('SyrupBar');
+const Token = contract.fromArtifact('Token');
+const Farm = contract.fromArtifact('Farm');
+const WBNB = contract.fromArtifact("WBNB");
+const IUniswapV2Pair = contract.fromArtifact("IUniswapV2Pair");
+const UniswapV2Factory = contract.fromArtifact("UniswapV2Factory");
+const UniswapV2Router02 = contract.fromArtifact("UniswapV2Router02");
+const numeral = require('numeral');
 
-const mintAmount = '100';
-const MINTED = web3.utils.toWei(mintAmount);
-let tokenPerBlock;
-const DEAD_ADDR = '0x000000000000000000000000000000000000dEaD';
-let lpToken; // = this.LP1.address;
-let old; // = this.migrate_token.address;
-let tax = '100'; // 10%
-let dev, user, devFeeAddr, depositFeeAddr, withdrawFeeAddr;
+let yellowBright = chalk.yellowBright;
+let magenta = chalk.magenta;
+let cyan = chalk.cyan;
+let yellow = chalk.yellow;
+let red = chalk.red;
+let blue = chalk.blue;
+
+function now() {
+    return parseInt((new Date().getTime()) / 1000);
+}
 
 function hours(total) {
     return parseInt(60 * 60 * total);
@@ -26,403 +33,91 @@ function fromWei(v) {
     return web3.utils.fromWei(v, 'ether').toString();
 }
 
+function fromGwei(v) {
+    return web3.utils.fromWei(v, 'gwei').toString();
+}
+
+function d(v) {
+    return numeral(v.toString()).format('0,0');
+}
+
 function toWei(v) {
     return web3.utils.toWei(v).toString();
 }
 
-describe('Farm test-cases', async function () {
+function date(ts) {
+    const pad = (n, s = 2) => (`${new Array(s).fill(0)}${n}`).slice(-s);
+    const d = new Date(ts * 1000);
+    return red(`${pad(d.getFullYear(), 4)}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`);
+}
+
+const tokenPerBlock = web3.utils.toWei('1');
+const mintAmount = '100';
+const MINTED = toWei(mintAmount);
+const DEAD_ADDR = '0x000000000000000000000000000000000000dEaD';
+let dev, user, feeAddress, reserve;
+const ONE = toWei('1');
+const TWO = toWei('2');
+const CEM = toWei('100');
+const DUZENTOS = toWei('200');
+const QUINHENTOS = toWei('500');
+
+describe('Bank', async function () {
     beforeEach(async function () {
+        this.timeout(60000);
         dev = accounts[0];
         user = accounts[1];
-        depositFeeAddr = accounts[2];
-        devFeeAddr = accounts[3];
-        withdrawFeeAddr = accounts[4];
-        tokenPerBlock = web3.utils.toWei('1');
 
-        this.token = await Token.new('Token', 'Token', {from: dev});
-        this.rfi = await TokneDeflationary.new({from: dev});
+        this.CAKE = await CakeToken.new({from: dev});
+        this.TOKEN = await Token.new('Token','Token', {from: dev});
+        this.BUSD = await FaucetERC20.new("BUSD", "BUSD", MINTED, {from: dev});
+        this.OLD = await FaucetERC20.new("Old", "Old", MINTED, {from: dev});
+        this.syrup = await SyrupBar.new(this.TOKEN.address, {from: dev});
+        this.mc = await MockMasterChef.new(this.CAKE.address, this.syrup.address, dev, tokenPerBlock, 0, {from: dev});
+        this.farm = await Farm.new(this.TOKEN.address, 0, this.mc.address, this.CAKE.address, {from: dev});
 
-        this.LP1 = await FaucetERC20.new("LP1", "LP1", MINTED, {from: dev});
-        this.migrate_token = await FaucetERC20.new("Old", "Old", MINTED, {from: dev});
-        this.minter = await TokenMinter.new(
-            this.token.address, devFeeAddr, tax,
-            "Minter", "Minter",
-            {from: dev});
-        lpToken = this.LP1.address;
-        old = this.migrate_token.address;
-        await this.token.mintUnlockedToken(dev, MINTED, {from: dev});
+        await this.TOKEN.mintUnlockedToken(dev, MINTED, {from: dev});
+        await this.CAKE.mint(dev, MINTED, {from: dev});
 
-        const startBlock = (await time.latestBlock()).toString();
-        // console.log('startBlock', startBlock);
-        this.master = await Farm.new(
-            this.token.address,
-            this.minter.address,
-            devFeeAddr,
-            tokenPerBlock,
-            startBlock,
-            this.migrate_token.address,
-            {from: dev});
-        await this.token.setAuthorizedMintCaller(this.minter.address, {from: dev});
-        await this.token.setAuthorizedMintCaller(this.master.address, {from: dev});
-        await this.minter.transferOwnership(this.master.address, {from: dev});
-    });
-/*
-    describe('MIGRATION', async function () {
-        const pid = '1', deposited = web3.utils.toWei('100');
-        const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
-        const noFeeIfAbovePeriod = 3600;
-        it('must migrate and stake', async function () {
+        this.weth = await WBNB.new({from: dev});
+        this.factory = await UniswapV2Factory.new({from: dev});
+        this.router = await UniswapV2Router02.new(this.factory.address, this.weth.address,{from: dev});
 
-            await this.master.add(allocPoint, old, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
-            // await this.token.approve(this.master.address, deposited, {from: dev});
-            await this.migrate_token.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
+        await this.factory.createPair(this.weth.address, this.CAKE.address);
+        await this.factory.createPair(this.weth.address, this.TOKEN.address);
+        await this.factory.createPair(this.weth.address, this.BUSD.address);
+        await this.factory.createPair(this.weth.address, this.OLD.address);
 
-            // balance must be 0 as we burn
-            const balanceOfOldToken = await this.migrate_token.balanceOf(dev);
-            expect(balanceOfOldToken).to.be.bignumber.equal('0');
+        this.WETH_CAKE_PAIR = await this.factory.getPair(this.weth.address, this.CAKE.address);
+        this.WETH_BUSD_PAIR = await this.factory.getPair(this.weth.address, this.BUSD.address);
+        this.WETH_TOKEN_PAIR = await this.factory.getPair(this.weth.address, this.TOKEN.address);
+        this.WETH_OLD_PAIR = await this.factory.getPair(this.weth.address, this.OLD.address);
 
-            // balance must be burned
-            const balanceOfBurnOldToken = await this.migrate_token.balanceOf(DEAD_ADDR);
-            expect(balanceOfBurnOldToken).to.be.bignumber.equal(deposited);
+        this.WETHCAKE = await IUniswapV2Pair.at(this.WETH_CAKE_PAIR);
+        this.WETHBUSD = await IUniswapV2Pair.at(this.WETH_BUSD_PAIR);
+        this.WETHTOKEN = await IUniswapV2Pair.at(this.WETH_TOKEN_PAIR);
+        this.WETHOLD = await IUniswapV2Pair.at(this.WETH_OLD_PAIR);
 
-            // must have same amount of token staked
-            const userInfo = await this.master.userInfo('0', dev, {from: dev});
-            expect(userInfo.amount).to.be.bignumber.equal(deposited);
-
-        });
+        await this.CAKE.approve(this.router.address, MINTED, {from: dev});
+        await this.TOKEN.approve(this.router.address, MINTED, {from: dev});
+        await this.BUSD.approve(this.router.address, MINTED, {from: dev});
+        await this.OLD.approve(this.router.address, MINTED, {from: dev});
 
 
     });
+    describe('Farm', async function () {
 
-    describe('test withdraw before with lock (no reward)', async function () {
-        const pid = '1', deposited = web3.utils.toWei('100');
-        const allocPoint = 1, depositFeeBP = 1000, withdrawFeeBP = 0, withdrawLockPeriod = 3600, withUpdate = true;
-        const noFeeIfAbovePeriod = 3600;
-        it('reward must NOT be paid', async function () {
-            await this.master.add(allocPoint, lpToken, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
-            await this.LP1.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
-
-            await time.advanceBlock();
-            const rewarded_1block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(fromWei(rewarded_1block)).to.be.equal('0.99999999999');
-
-            await time.advanceBlock();
-            const rewarded_2block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(fromWei(rewarded_2block)).to.be.equal('1.99999999998');
-
-            await time.advanceBlock();
-            const rewarded_3block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(fromWei(rewarded_3block)).to.be.equal('2.99999999997');
-
-            const isLocked = (await this.master.isLocked(dev, pid, {from: dev}));
-            expect(true).to.be.equal(isLocked);
-
-            const withdraw = web3.utils.toWei('90');
-            await this.master.withdraw(pid, withdraw, {from: dev});
-
-            const balanceOf = await this.LP1.balanceOf(dev, {from: dev});
-            expect(balanceOf).to.be.bignumber.equal(withdraw);
-
-
-            const balanceOfReward = await this.token.balanceOf(dev, {from: dev});
-            expect('100').to.be.equal(fromWei(balanceOfReward)); // no reward paid
-
+        it('basic security', async function () {
+            this.timeout(60000);
+            await this.farm.updateTokenPerBlock(tokenPerBlock, {from: dev});
+            await this.farm.updateMultiplier(1, {from: dev});
+            // await this.router.addLiquidity(this.BUSD.address, this.token.address, QUINHENTOS, QUINHENTOS, 0, 0, dev, now() + 60, {from: dev});
+            // await this.router.addLiquidityETH(this.T1.address, ONE, ONE, ONE, dev, now() + 60, {from: dev, value: ONE});
+            // await this.router.addLiquidityETH(this.token.address, ONE, ONE, ONE, dev, now() + 60, {from: dev, value: ONE});
+            // await this.router.swapExactTokensForTokensSupportingFeeOnTransferTokens(ONE, 0, [this.token.address, this.BUSD.address], reserve, n2, {from: user});
         });
+
     });
 
-    describe('test withdraw before with lock (pay reward)', async function () {
-        const pid = '1', deposited = web3.utils.toWei('100');
-        const allocPoint = 1, depositFeeBP = 1000, withdrawFeeBP = 0, withdrawLockPeriod = 3600, withUpdate = true;
-        const noFeeIfAbovePeriod = 3600;
-        it('reward must be paid', async function () {
-            await this.master.add(allocPoint, lpToken, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
-            await this.LP1.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
-
-            await time.advanceBlock();
-            const rewarded_1block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(fromWei(rewarded_1block)).to.be.equal('0.99999999999');
-
-            await time.advanceBlock();
-            const rewarded_2block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(fromWei(rewarded_2block)).to.be.equal('1.99999999998');
-
-            await time.advanceBlock();
-            const rewarded_3block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(fromWei(rewarded_3block)).to.be.equal('2.99999999997');
-
-            // const getLockPeriod = await this.master.getLockPeriod(dev, pid, {from: dev});
-            // const isLocked = await this.master.isLocked(dev, pid, {from: dev});
-
-            const oneDay = time.duration.days(1);
-
-            await time.increase(oneDay);
-            // const getLockPeriod1 = await this.master.getLockPeriod(dev, pid, {from: dev});
-            // const isLocked1 = await this.master.isLocked(dev, pid, {from: dev});
-
-
-            // console.log('getLockPeriod', getLockPeriod.toString(), oneDay.toString())
-            // console.log('isLocked', isLocked)
-            // console.log('getLockPeriod', getLockPeriod1.toString())
-            // console.log('isLocked', isLocked1)
-
-            const withdraw = web3.utils.toWei('90');
-            await this.master.withdraw(pid, withdraw, {from: dev});
-
-            const balanceOf = await this.LP1.balanceOf(dev, {from: dev});
-            expect(balanceOf).to.be.bignumber.equal(withdraw);
-
-            const balanceOfReward = await this.token.balanceOf(dev, {from: dev});
-            expect('104.499999999955').to.be.equal(fromWei(balanceOfReward)); // reward is paid
-
-        });
-    });
-*/
-    // DONE
-    describe('contract security', async function () {
-        const pid = 0;
-
-        it('deflationary exploit protection', async function () {
-            const rfi = this.rfi.address;
-            const pid = '1', deposited = web3.utils.toWei('100');
-            const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
-            const noFeeIfAbovePeriod = 0;
-            await this.master.add(allocPoint, rfi, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
-            await this.rfi.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
-            const userInfo = await this.master.userInfo(pid, dev, {from: dev});
-            const pendingToken = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            const amount = userInfo.amount.toString();
-            const rewardDebt = userInfo.rewardDebt.toString();
-
-            // all must be 0 here
-            expect( fromWei(amount) ).to.be.bignumber.equal( '90' );
-            expect(rewardDebt).to.be.equal('0');
-            expect(pendingToken).to.be.equal('0');
-
-            await this.master.withdraw(pid, amount, {from: dev});
-
-            const balanceOf = await this.LP1.balanceOf(dev, {from: dev});
-            expect(balanceOf).to.be.bignumber.equal(amount);
-
-            const balanceOfReward = await this.token.balanceOf(dev, {from: dev});
-            expect(web3.utils.toWei('103.6')).to.be.bignumber.equal(balanceOfReward);
-
-        });
-
-        /*
-        it('adminUpdateBonus', async function () {
-            await expectRevert(this.master.adminUpdateBonus(0, {from: user}), 'Ownable: caller is not the owner');
-            await this.master.adminUpdateBonus(0, {from: dev});
-        });
-        it('adminUpdateTokenPerBlock', async function () {
-            await expectRevert(this.master.adminUpdateTokenPerBlock(tokenPerBlock, {from: user}), 'Ownable: caller is not the owner');
-            await this.master.adminUpdateTokenPerBlock(tokenPerBlock, {from: dev});
-        });
-        it('adminSetDevFeeAddr', async function () {
-            await expectRevert(this.master.adminSetDevFeeAddr(dev, {from: user}), 'Ownable: caller is not the owner');
-            await this.master.adminSetDevFeeAddr(dev, {from: dev});
-        });
-        it('adminSetTaxAddr', async function () {
-            await expectRevert(this.master.adminSetTaxAddr(dev, {from: user}), 'Ownable: caller is not the owner');
-            await this.master.adminSetTaxAddr(dev, {from: dev});
-        });
-        it('adminSetTax', async function () {
-            await expectRevert(this.master.adminSetTax(0, {from: user}), 'Ownable: caller is not the owner');
-            await this.master.adminSetTax(0, {from: dev});
-        });
-        it('adminSetWhiteList', async function () {
-            await expectRevert(this.master.adminSetWhiteList(dev, true, {from: user}), 'Ownable: caller is not the owner');
-            await this.master.adminSetWhiteList(dev, true, {from: dev});
-        });
-        it('adminSetMinterStatus', async function () {
-            await expectRevert(this.master.adminSetWhiteList(dev, true, {from: user}), 'Ownable: caller is not the owner');
-            await this.master.adminSetWhiteList(dev, true, {from: dev});
-        });
-        it('adminSetStartBlock', async function () {
-            await expectRevert(this.master.adminSetStartBlock(0, {from: user}), 'Ownable: caller is not the owner');
-            await this.master.adminSetStartBlock(0, {from: dev});
-        });
-        it('adminSetBurnAddr', async function () {
-            await expectRevert(this.master.adminSetBurnAddr(dev, {from: user}), 'Ownable: caller is not the owner');
-            await this.master.adminSetBurnAddr(dev, {from: dev});
-        });
-        it('adminSetContractStatus', async function () {
-            await expectRevert(this.master.adminSetContractStatus(dev, true, {from: user}), 'Ownable: caller is not the owner');
-            await this.master.adminSetContractStatus(dev, true, {from: dev});
-        });
-
-        it('add', async function () {
-            const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
-            const noFeeIfAbovePeriod = 3600;
-            await expectRevert(this.master.add(allocPoint, lpToken, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: user}),
-                'Ownable: caller is not the owner');
-            await this.master.add(allocPoint, lpToken, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
-        });
-
-        it('set', async function () {
-            const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
-            const noFeeIfAbovePeriod = 3600;
-            await expectRevert(this.master.set(pid, allocPoint, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: user}),
-                'Ownable: caller is not the owner');
-            await this.master.set(pid, allocPoint, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
-        });
-         */
-
-
-
-
-    });
-    /*
-    describe('test deposit/withdraw', async function () {
-
-        it('deposit', async function () {
-            const pid = '1', deposited = web3.utils.toWei('100');
-            const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
-            const noFeeIfAbovePeriod = 3600;
-            await this.master.add(allocPoint, lpToken, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
-            await this.LP1.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
-            const userInfo = await this.master.userInfo(pid, dev, {from: dev});
-            const pendingToken = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            const amount = userInfo.amount.toString();
-            const rewardDebt = userInfo.rewardDebt.toString();
-
-            // all must be 0 here
-            expect(amount).to.be.equal(deposited);
-            expect(rewardDebt).to.be.equal('0');
-            expect(pendingToken).to.be.equal('0');
-
-        });
-
-        it('reward', async function () {
-            const pid = '1', deposited = web3.utils.toWei('100');
-            const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
-            const noFeeIfAbovePeriod = 3600;
-            await this.master.add(allocPoint, lpToken, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
-            await this.LP1.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
-
-            const reward_1block = web3.utils.toWei('1');
-            const reward_2block = web3.utils.toWei('2');
-            const reward_3block = web3.utils.toWei('3');
-
-            await time.advanceBlock();
-            const rewarded_1block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(rewarded_1block).to.be.bignumber.equal(reward_1block);
-
-            await time.advanceBlock();
-            const rewarded_2block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(rewarded_2block).to.be.bignumber.equal(reward_2block);
-
-            await time.advanceBlock();
-            const rewarded_3block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(rewarded_3block).to.be.bignumber.equal(reward_3block);
-
-        });
-
-        it('withdraw LP & reward', async function () {
-            const pid = '1', deposited = web3.utils.toWei('100');
-            const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
-            const noFeeIfAbovePeriod = 0;
-
-            await this.master.add(allocPoint, lpToken, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
-            await this.LP1.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
-
-
-            const reward_1block = web3.utils.toWei('1');
-            const reward_2block = web3.utils.toWei('2');
-            const reward_3block = web3.utils.toWei('3');
-
-            await time.advanceBlock();
-            const rewarded_1block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(rewarded_1block).to.be.bignumber.equal(reward_1block);
-
-            await time.advanceBlock();
-            const rewarded_2block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(rewarded_2block).to.be.bignumber.equal(reward_2block);
-
-            await time.advanceBlock();
-            const rewarded_3block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(rewarded_3block).to.be.bignumber.equal(reward_3block);
-
-            await this.master.withdraw(pid, deposited, {from: dev});
-
-            const balanceOf = await this.LP1.balanceOf(dev, {from: dev});
-            expect(balanceOf).to.be.bignumber.equal(deposited);
-
-            const balanceOfReward = await this.token.balanceOf(dev, {from: dev});
-            expect(web3.utils.toWei('103.6')).to.be.bignumber.equal(balanceOfReward);
-
-        });
-    });
-
-    describe('test deposit/withdraw with fees', async function () {
-        const pid = '1', deposited = web3.utils.toWei('100');
-        const allocPoint = 1, depositFeeBP = 1000, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
-        const noFeeIfAbovePeriod = 0;
-        it('deposit w/ 10% fee', async function () {
-            await this.master.add(allocPoint, lpToken, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
-            await this.LP1.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
-
-            await time.advanceBlock();
-            const rewarded_1block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(fromWei(rewarded_1block)).to.be.equal('0.99999999999');
-
-            await time.advanceBlock();
-            const rewarded_2block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(fromWei(rewarded_2block)).to.be.equal('1.99999999998');
-
-            await time.advanceBlock();
-            const rewarded_3block = (await this.master.pendingToken(pid, dev, {from: dev})).toString();
-            expect(fromWei(rewarded_3block)).to.be.equal('2.99999999997');
-
-            const withdraw = web3.utils.toWei('90');
-            await this.master.withdraw(pid, withdraw, {from: dev});
-
-            const balanceOf = await this.LP1.balanceOf(dev, {from: dev});
-            expect(balanceOf).to.be.bignumber.equal(withdraw);
-
-            const balanceOfReward = await this.token.balanceOf(dev, {from: dev});
-            expect('103.599999999964').to.be.equal(fromWei(balanceOfReward));
-
-        });
-    });
-
-
-    describe('emergencyWithdraw', async function () {
-        const pid = '1', deposited = web3.utils.toWei('100');
-        const allocPoint = 1, depositFeeBP = 0, withdrawFeeBP = 0, withdrawLockPeriod = 0, withUpdate = true;
-        const noFeeIfAbovePeriod = 0;
-        it('emergencyWithdraw - no lock period', async function () {
-
-            await this.master.add(allocPoint, lpToken, depositFeeBP, depositFeeAddr, withdrawFeeBP, withdrawFeeAddr, withdrawLockPeriod, noFeeIfAbovePeriod, withUpdate, {from: dev});
-            await this.LP1.approve(this.master.address, deposited, {from: dev});
-            await this.master.deposit(pid, deposited, {from: dev});
-
-            const balanceOfToken1 = await this.token.balanceOf(dev);
-            expect(balanceOfToken1).to.be.bignumber.equal(MINTED);
-
-            await this.master.emergencyWithdraw(pid, {from: dev});
-
-            // 2 blocks only, 100% must be burned, user get 0% and Token reward
-            const balanceOfLP = web3.utils.fromWei(await this.LP1.balanceOf(dev), 'ether').toString();
-            const balanceOfTokenBurned = web3.utils.fromWei(await this.LP1.balanceOf(DEAD_ADDR), 'ether').toString();
-            expect(balanceOfLP).to.be.bignumber.equal('100');
-            expect(balanceOfTokenBurned).to.be.bignumber.equal('0');
-
-            // no token reward
-            const tokenRewarded = web3.utils.fromWei(await this.token.balanceOf(dev), 'ether').toString();
-            expect('100').to.be.equal(parseFloat(tokenRewarded).toFixed(0));
-
-        });
-
-
-    });
-    */
 
 });

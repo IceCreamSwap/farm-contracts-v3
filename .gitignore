@@ -7,3 +7,4 @@ backup
 build
 .env
 .idea
+truffle-config.js

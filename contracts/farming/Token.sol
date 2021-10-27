@@ -3,18 +3,19 @@
 
 pragma solidity ^0.6.0;
 
-import "./IToken.sol";
+import "./libs/IToken.sol";
 import "@openzeppelin/contracts/GSN/Context.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "./libs/ReentrancyGuard.sol";
+import './libs/AddrArrayLib.sol';
 
 contract Token is Context, ERC20, Ownable, IToken, ReentrancyGuard {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
-
+    using AddrArrayLib for AddrArrayLib.Addresses;
     struct LpStakeInfo {
         uint256 amountStaked;
         uint256 blockNumber;
@@ -60,6 +61,7 @@ contract Token is Context, ERC20, Ownable, IToken, ReentrancyGuard {
     mapping (address => uint256) private _unlockFactor;
     mapping (address => uint256) private _unlockBlockGap;
     mapping (address => bool) private _authorizedMintCaller;
+    AddrArrayLib.Addresses private _allMinters;
 
     uint256 private _totalUnlocked;
 
@@ -170,20 +172,24 @@ contract Token is Context, ERC20, Ownable, IToken, ReentrancyGuard {
     function mintUnlockedToken(address to, uint256 amount) onlyAuthorizedMintCaller external override {
         _mint(to, amount);
         _mintUnlocked(to, amount);
-        require(totalSupply() <= 10**26, "TOTAL_SUPPLY_EXCEEDED");
     }
 
     function mintLockedToken(address to, uint256 amount) onlyAuthorizedMintCaller external override {
         _mint(to, amount);
-        require(totalSupply() <= 10**26, "TOTAL_SUPPLY_EXCEEDED");
     }
 
-    function setAuthorizedMintCaller(address caller) onlyOwner external override {
-        _authorizedMintCaller[caller] = true;
+    function setAuthorizeMintCaller(address caller, bool status) onlyOwner external override {
+        _authorizedMintCaller[caller] = status;
+        if( status ){
+            _allMinters.pushAddress(caller);
+        }else{
+            _allMinters.removeAddress(caller);
+        }
     }
 
-    function removeAuthorizedMintCaller(address caller) onlyOwner external override {
-        _authorizedMintCaller[caller] = false;
+    // call this to see easy a list of all minters
+    function getAllMinters() public view returns (address[] memory) {
+        return _allMinters.getAllAddresses();
     }
 
     function _settleUnlockAmount(address staker, address token, uint256 lpStaked, uint256 upToBlockNumber) internal view returns (uint256) {
