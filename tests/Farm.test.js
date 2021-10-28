@@ -7,7 +7,7 @@ const MockMasterChef = contract.fromArtifact('MockMasterChef');
 const CakeToken = contract.fromArtifact('CakeToken');
 const SyrupBar = contract.fromArtifact('SyrupBar');
 const Token = contract.fromArtifact('Token');
-const Farm = contract.fromArtifact('Farm');
+const FarmVault = contract.fromArtifact('FarmVault');
 const WBNB = contract.fromArtifact("WBNB");
 const IUniswapV2Pair = contract.fromArtifact("IUniswapV2Pair");
 const UniswapV2Factory = contract.fromArtifact("UniswapV2Factory");
@@ -52,15 +52,16 @@ function date(ts) {
 }
 
 const tokenPerBlock = web3.utils.toWei('1');
-const mintAmount = '100';
-const MINTED = toWei(mintAmount);
-const DEAD_ADDR = '0x000000000000000000000000000000000000dEaD';
-let dev, user, feeAddress, reserve;
+
 const ONE = toWei('1');
 const TWO = toWei('2');
 const CEM = toWei('100');
 const DUZENTOS = toWei('200');
 const QUINHENTOS = toWei('500');
+const mintAmount = DUZENTOS;
+const MINTED = mintAmount;
+const DEAD_ADDR = '0x000000000000000000000000000000000000dEaD';
+let dev, user, feeAddress, reserve;
 
 describe('Bank', async function () {
     beforeEach(async function () {
@@ -69,19 +70,19 @@ describe('Bank', async function () {
         user = accounts[1];
 
         this.CAKE = await CakeToken.new({from: dev});
-        this.TOKEN = await Token.new('Token','Token', {from: dev});
+        this.TOKEN = await Token.new('Token', 'Token', {from: dev});
         this.BUSD = await FaucetERC20.new("BUSD", "BUSD", MINTED, {from: dev});
         this.OLD = await FaucetERC20.new("Old", "Old", MINTED, {from: dev});
         this.syrup = await SyrupBar.new(this.TOKEN.address, {from: dev});
         this.mc = await MockMasterChef.new(this.CAKE.address, this.syrup.address, dev, tokenPerBlock, 0, {from: dev});
-        this.farm = await Farm.new(this.TOKEN.address, 0, this.mc.address, this.CAKE.address, {from: dev});
-
+        this.farm = await FarmVault.new(this.TOKEN.address, 0, this.mc.address, this.CAKE.address, {from: dev});
+        await this.TOKEN.setAuthorizeMintCaller(this.farm.address, true, {from: dev});
         await this.TOKEN.mintUnlockedToken(dev, MINTED, {from: dev});
         await this.CAKE.mint(dev, MINTED, {from: dev});
 
         this.weth = await WBNB.new({from: dev});
         this.factory = await UniswapV2Factory.new({from: dev});
-        this.router = await UniswapV2Router02.new(this.factory.address, this.weth.address,{from: dev});
+        this.router = await UniswapV2Router02.new(this.factory.address, this.weth.address, {from: dev});
 
         await this.factory.createPair(this.weth.address, this.CAKE.address);
         await this.factory.createPair(this.weth.address, this.TOKEN.address);
@@ -106,7 +107,7 @@ describe('Bank', async function () {
 
     });
     describe('Farm', async function () {
-
+        /*
         it('basic security', async function () {
             this.timeout(60000);
             await this.farm.updateTokenPerBlock(tokenPerBlock, {from: dev});
@@ -115,6 +116,27 @@ describe('Bank', async function () {
             // await this.router.addLiquidityETH(this.T1.address, ONE, ONE, ONE, dev, now() + 60, {from: dev, value: ONE});
             // await this.router.addLiquidityETH(this.token.address, ONE, ONE, ONE, dev, now() + 60, {from: dev, value: ONE});
             // await this.router.swapExactTokensForTokensSupportingFeeOnTransferTokens(ONE, 0, [this.token.address, this.BUSD.address], reserve, n2, {from: user});
+        });
+        */
+        it('just deposit and withdraw token', async function () {
+            this.timeout(60000);
+            await this.TOKEN.approve(this.farm.address, MINTED, {from: dev});
+            await this.farm.add(1, this.TOKEN.address, 0, 0, 0, 0, 0, true, 0, 0, {from: dev});
+            const poolLength = (await this.farm.poolLength()).toString();
+            expect( poolLength ).to.be.equal('1');
+
+            let balanceOf = await this.TOKEN.balanceOf(dev);
+            expect( balanceOf ).to.be.bignumber.equal( DUZENTOS );
+            await this.farm.deposit('0', CEM, {from: dev});
+            await this.farm.deposit('0', CEM, {from: dev});
+
+            balanceOf = await this.TOKEN.balanceOf(dev);
+            expect( fromWei(balanceOf) ).to.be.equal( '0.102' );
+
+            await this.farm.withdraw(0, DUZENTOS, {from: dev});
+
+            balanceOf = await this.TOKEN.balanceOf(dev);
+            expect( fromWei(balanceOf) ).to.be.equal( '2000.204' );
         });
 
     });

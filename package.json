@@ -19,11 +19,14 @@
     "dev:router": "truffle migrate --f 6 --to 6 --network dev --reset",
     "migrate": "truffle migrate --network dev --reset",
     "compile": "truffle compile --network dev",
-    "dev:test:farm": "truffle test tests/Farm.test.js --network dev --bail",
-    "dev:test:vault": "truffle test tests/Vault.test.js --network dev --bail",
-    "test": "truffle compile --all --network dev && nodemon --exec yarn dev:test:farm -e sol,js",
-    "test:vault": "truffle compile --all --network dev  && nodemon --exec yarn dev:test:vault -e sol,js",
-    "live": "yarn test"
+    "dev:test:farm": "truffle compile --all --network dev && truffle test tests/Farm.test.js --network dev --bail",
+    "dev:test:vault": "truffle compile --all --network dev  && truffle test tests/Vault.test.js --network dev --bail",
+    "testx": "truffle compile --all --network dev && nodemon --exec yarn dev:test:farm -e sol,js",
+    "test": " nodemon --exec yarn dev:test:farm -e sol,js",
+    "test:vault": " nodemon --exec yarn dev:test:vault -e sol,js",
+    "live": "yarn test",
+    "debug": "node --inspect-brk ./node_modules/truffle/build/cli.bundled.js test tests/Farm.test.js",
+    "debug-chrome": "chrome chrome://inspect/#devices"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^3.2.0",

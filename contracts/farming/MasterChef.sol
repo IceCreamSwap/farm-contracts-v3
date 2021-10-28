@@ -12,7 +12,7 @@ import "./libs/ReentrancyGuard.sol";
 import './libs/AddrArrayLib.sol';
 import './libs/IFarm.sol';
 
-contract Farm is Ownable, ReentrancyGuard {
+contract FarmVault is Ownable, ReentrancyGuard {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
     using AddrArrayLib for AddrArrayLib.Addresses;
@@ -36,6 +36,7 @@ contract Farm is Ownable, ReentrancyGuard {
         uint16 depositFee;
         uint256 cake_pid;
         uint16 harvestFee;
+        uint16 unlocked;
     }
 
     struct PoolInfoMigration {
@@ -67,7 +68,9 @@ contract Farm is Ownable, ReentrancyGuard {
     uint256 public bonusMultiplier = 1;
 
     PoolInfo[] public poolInfo;
+
     PoolInfoMigration[] public poolInfoMigration;
+
     uint256[] public poolsList;
     mapping(uint256 => mapping(address => UserInfo)) public userInfo;
     mapping(uint256 => AddrArrayLib.Addresses) private addressByPid;
@@ -85,7 +88,7 @@ contract Farm is Ownable, ReentrancyGuard {
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event WithdrawWithTax(address indexed user, uint256 indexed pid, uint256 sent, uint256 burned);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
-    event Transfer(address indexed to, uint256 requsted, uint256 sent);
+    event Transfer(address indexed to, uint256 requsted, uint256 unlocked);
     event TokenPerBlockUpdated(uint256 tokenPerBlock);
     event UpdateEmissionSettings(address indexed from, uint256 depositAmount, uint256 endBlock);
     event UpdateMultiplier(uint256 multiplierNumber);
@@ -144,33 +147,47 @@ contract Farm is Ownable, ReentrancyGuard {
         bool _withUpdate,
         uint256 _cake_pid,
         uint16 _harvestFee
-    ) external onlyOwner {
+    ) external onlyOwner
+    {
         require(_depositFee <= 1000, "err1");
         require(_taxWithdraw <= 1000, "err2");
         require(_taxWithdrawBeforeLock <= 2500, "err3");
         require(_withdrawLockPeriod <= 30 days, "err4");
+
         IERC20(_lpToken).balanceOf(address(this));
+
         if (_withUpdate) {
             massUpdatePools();
         }
-        uint256 lastRewardBlock =
-        block.number > startBlock ? block.number : startBlock;
+
+        uint256 lastRewardBlock = block.number > startBlock ? block.number : startBlock;
 
         totalAllocPoint = totalAllocPoint.add(_allocPoint);
         poolInfo.push(
             PoolInfo(
             {
-            lpToken : IERC20(_lpToken),
-            allocPoint : _allocPoint,
-            lastRewardBlock : lastRewardBlock,
-            accTokenPerShare : 0,
-            taxWithdraw : _taxWithdraw,
-            taxWithdrawBeforeLock : _taxWithdrawBeforeLock,
-            withdrawLockPeriod : _withdrawLockPeriod,
-            lock : _lock,
-            depositFee : _depositFee,
-            cake_pid : _cake_pid,
-            harvestFee : _harvestFee
+                lpToken : IERC20(_lpToken),
+                allocPoint : _allocPoint,
+                lastRewardBlock : lastRewardBlock,
+                accTokenPerShare : 0,
+                taxWithdraw : _taxWithdraw,
+                taxWithdrawBeforeLock : _taxWithdrawBeforeLock,
+                withdrawLockPeriod : _withdrawLockPeriod,
+                lock : _lock,
+                depositFee : _depositFee,
+                cake_pid : _cake_pid,
+                harvestFee : _harvestFee,
+                unlocked: 1000 // 10% of reward generated is unlocked.
+            })
+        );
+        poolInfoMigration.push(
+            PoolInfoMigration({
+                startBlock: 0,
+                endBlock: 0,
+                ratio: 0,
+                enabled: false,
+                reserve: msg.sender,
+                max: 0
             })
         );
 
@@ -190,17 +207,25 @@ contract Farm is Ownable, ReentrancyGuard {
         uint256 _withdrawLockPeriod,
         uint256 _lock,
         uint16 _depositFee,
-        uint16 _harvestFee) external onlyOwner validatePoolByPid(_pid) {
-        require(_depositFee <= 1000, "err1");
-        require(_taxWithdraw <= 1000, "err2");
-        require(_taxWithdrawBeforeLock <= 2500, "err3");
-        require(_withdrawLockPeriod <= 30 days, "err4");
+        uint16 _harvestFee,
+        uint16 _unlocked
+    )
+    external onlyOwner validatePoolByPid(_pid)
+    {
+        require(_unlocked <= 10000, "err1");
+        require(_depositFee <= 1000, "err2");
+        require(_taxWithdraw <= 1000, "err3");
+        require(_taxWithdrawBeforeLock <= 2500, "err4");
+        require(_withdrawLockPeriod <= 30 days, "err5");
+
         poolInfo[_pid].taxWithdraw = _taxWithdraw;
         poolInfo[_pid].taxWithdrawBeforeLock = _taxWithdrawBeforeLock;
         poolInfo[_pid].withdrawLockPeriod = _withdrawLockPeriod;
         poolInfo[_pid].lock = _lock;
         poolInfo[_pid].depositFee = _depositFee;
         poolInfo[_pid].harvestFee = _harvestFee;
+        poolInfo[_pid].unlocked = _unlocked;
+
     }
 
     /*
@@ -210,19 +235,19 @@ contract Farm is Ownable, ReentrancyGuard {
     - Every migration will stake migrated tokens to token pool.
     */
     function set_migration(uint256 _pid,
-        uint256 startBlock,
-        uint256 endBlock,
-        uint256 ratio,
-        bool enabled,
-        address reserve,
-        uint256 max)
+        uint256 _startBlock,
+        uint256 _endBlock,
+        uint256 _ratio,
+        bool _enabled,
+        address _reserve,
+        uint256 _max)
     external onlyOwner validatePoolByPid(_pid) {
-        poolInfoMigration[_pid].startBlock = startBlock;
-        poolInfoMigration[_pid].endBlock = endBlock;
-        poolInfoMigration[_pid].ratio = ratio;
-        poolInfoMigration[_pid].enabled = enabled;
-        poolInfoMigration[_pid].reserve = reserve;
-        poolInfoMigration[_pid].max = max;
+        poolInfoMigration[_pid].startBlock = _startBlock;
+        poolInfoMigration[_pid].endBlock = _endBlock;
+        poolInfoMigration[_pid].ratio = _ratio;
+        poolInfoMigration[_pid].enabled = _enabled;
+        poolInfoMigration[_pid].reserve = _reserve;
+        poolInfoMigration[_pid].max = _max;
     }
 
     function set(
@@ -270,6 +295,10 @@ contract Farm is Ownable, ReentrancyGuard {
     validatePoolByPid(_pid)
     returns (uint256)
     {
+        // this is a migration pool, get pending from pool token.
+        if (poolInfoMigration[_pid].enabled == false)
+            _pid = 0;
+
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][_user];
         uint256 accTokenPerShare = pool.accTokenPerShare;
@@ -307,18 +336,48 @@ contract Farm is Ownable, ReentrancyGuard {
         uint256 fee = tokenReward.mul(reserveFee).div(10000);
         // 2%
         token.mintUnlockedToken(devaddr, fee);
-        token.mintLockedToken(address(this), tokenReward);
         pool.accTokenPerShare = pool.accTokenPerShare.add(tokenReward.mul(1e12).div(lpSupply));
         pool.lastRewardBlock = block.number;
     }
 
-    event Migration(address indexed user, uint256 indexed pid, uint256 amount);
-    function deposit(uint256 _pid, uint256 _amount) external
-    validatePoolByPid(_pid) nonReentrant notContract notBlacklisted
+    function payRewardByPid(uint256 pid) nonReentrant public {
+        _payRewardByPid(pid, msg.sender);
+        _harvestAll();
+    }
+
+    function compoundAll() nonReentrant public {
+        uint256 length = poolInfo.length;
+        for (uint256 pid = 0; pid < length; ++pid) {
+            compound(pid);
+        }
+        _harvestAll();
+    }
+    // Stake Token tokens to MasterChef
+    function compound(uint256 _pid) public nonReentrant {
+        if (pendingReward(_pid, msg.sender) > 0) {
+            PoolInfo storage pool = poolInfo[_pid];
+            updatePool(_pid);
+            _payRewardByPid(_pid, msg.sender);
+            uint256 _amount = pool.lpToken.balanceOf(msg.sender);
+            deposit_internal(0, _amount);
+        }
+    }
+
+
+    //
+    function deposit(uint256 _pid, uint256 _amount)
+        validatePoolByPid(_pid) nonReentrant notContract notBlacklisted
+    public {
+        deposit_internal(_pid, _amount);
+    }
+
+    function deposit_internal(uint256 _pid, uint256 _amount) internal
+
     {
 
         // migration support
-        if( poolInfoMigration[_pid].enabled == true ){
+        if (poolInfoMigration[_pid].enabled) {
+            require(false, "--MIGRATE--");
             // we are migrating, so we operate on pid=0 (farm token)
             _pid = 0;
             // if farm token has tax on transfer or migrated token.
@@ -334,7 +393,6 @@ contract Farm is Ownable, ReentrancyGuard {
 
         if (_amount > 0) {
             if (pool.depositFee > 0) {
-
                 // this pool has deposit fee, compute it here
                 uint256 tax = _amount.mul(pool.depositFee).div(10000);
                 pool.lpToken.safeTransferFrom(address(msg.sender), taxAddress, tax);
@@ -342,11 +400,12 @@ contract Farm is Ownable, ReentrancyGuard {
                 // will store value - fee to save correct deposited amount to user balance
                 uint256 received;
 
-                if( poolInfoMigration[_pid].enabled == true )
-                    // are we doing a migration? if so, amount is same
+                if (poolInfoMigration[_pid].enabled == true)
+                // are we doing a migration? if so, amount is same
                     received = _amount.sub(tax);
                 else
-                    // no migration, transfer token and caputure new amount in received
+
+                // no migration, transfer token and caputure new amount in received
                     received = transferToContract(pool.lpToken, _amount.sub(tax));
 
                 // contract balance for this pid/lp
@@ -359,7 +418,6 @@ contract Farm is Ownable, ReentrancyGuard {
                 }
             } else {
                 _amount = transferToContract(pool.lpToken, _amount);
-                migrateToken(_pid, _amount);
                 deposits[_pid] = deposits[_pid].add(_amount);
                 user.amount = user.amount.add(_amount);
                 userPool(_pid, msg.sender);
@@ -375,7 +433,8 @@ contract Farm is Ownable, ReentrancyGuard {
 
         }
         user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
-        _harvestAll();
+        // _harvestAll();
+
     }
 
 
@@ -383,6 +442,11 @@ contract Farm is Ownable, ReentrancyGuard {
 
     function withdraw(uint256 _pid, uint256 _amount) external validatePoolByPid(_pid)
     nonReentrant notContract {
+
+        // migration pool, reward from token pool
+        if (poolInfoMigration[_pid].enabled == false)
+            _pid = 0;
+
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         if (user.amount >= _amount && pool.cake_pid > 0) {
@@ -437,18 +501,6 @@ contract Farm is Ownable, ReentrancyGuard {
         user.amount = 0;
         user.rewardDebt = 0;
         userPool(_pid, msg.sender);
-    }
-
-    function safeTokenTransfer(address _to, uint256 _amount) internal {
-        uint256 balance = token.balanceOf(address(this));
-        bool transferSuccess = false;
-        if (_amount > balance) {
-            transferSuccess = token.transfer(_to, balance);
-        } else {
-            transferSuccess = token.transfer(_to, _amount);
-        }
-        emit Transfer(_to, _amount, balance);
-        require(transferSuccess, "SAFE TOKEN TRANSFER FAILED");
     }
 
     function setMultiplier(uint256 val) external onlyAdmin {
@@ -677,20 +729,6 @@ contract Farm is Ownable, ReentrancyGuard {
         _;
     }
 
-
-    function payAllReward() public {
-        for (uint256 i = 0; i < poolsList.length; ++i) {
-            uint256 pid = poolsList[i];
-            _payRewardByPid(pid, msg.sender);
-        }
-        _harvestAll();
-    }
-
-    function payRewardByPid(uint256 pid) public {
-        _payRewardByPid(pid, msg.sender);
-        _harvestAll();
-    }
-
     function canHarvest(uint256 pid, address recipient) public view returns (bool){
         // PoolInfo storage pool = poolInfo[pid];
         UserInfo storage user = userInfo[pid][recipient];
@@ -698,7 +736,7 @@ contract Farm is Ownable, ReentrancyGuard {
         return block.timestamp >= user.nextHarvestUntil;
     }
 
-    function _payRewardByPid(uint256 pid, address recipient) public {
+    function _payRewardByPid(uint256 pid, address recipient) internal {
         PoolInfo storage pool = poolInfo[pid];
         UserInfo storage user = userInfo[pid][recipient];
         uint256 pending = user.amount.mul(pool.accTokenPerShare).div(1e12).sub(user.rewardDebt);
@@ -708,9 +746,15 @@ contract Farm is Ownable, ReentrancyGuard {
                 uint256 fee = 0;
                 if (pool.harvestFee > 0) {
                     fee = totalRewards.mul(pool.harvestFee).div(10000);
-                    safeTokenTransfer(taxAddress, fee);
+                    token.mintUnlockedToken(taxAddress, fee);
                 }
-                safeTokenTransfer(recipient, totalRewards.sub(fee));
+
+                totalRewards = totalRewards.sub(fee);
+                uint256 unlocked = totalRewards.mul(pool.unlocked).div(10000);
+                token.mintLockedToken(recipient, unlocked);
+                token.mintUnlockedToken(recipient, totalRewards.sub(unlocked));
+                emit Transfer(recipient, totalRewards, unlocked);
+
                 // reset lockup
                 totalLockedUpRewards = totalLockedUpRewards.sub(user.rewardLockedUp);
                 user.rewardLockedUp = 0;
@@ -723,33 +767,38 @@ contract Farm is Ownable, ReentrancyGuard {
         // emit PayReward(recipient, pid, status, user.amount, pending, user.rewardDebt);
     }
 
-    function transferToContract(IERC20 lp, uint256 amount) internal returns(uint256){
+    function transferToContract(IERC20 lp, uint256 amount) internal returns (uint256){
         require(amount > 0, "amount=0");
         uint256 oldBalance = lp.balanceOf(address(this));
-        pool.lpToken.safeTransferFrom(address(msg.sender), address(this), amount);
+        lp.safeTransferFrom(address(msg.sender), address(this), amount);
         uint256 newBalance = lp.balanceOf(address(this));
         return newBalance.sub(oldBalance);
     }
-    function migrateToken(uint256 _pid, uint256 amount) internal{
-        if( poolInfoMigration[_pid].enabled == false ){
-            return;
-        }
+
+    event Migration(address indexed user, uint256 indexed pid, uint256 amount);
+    // control the max amount user can migrate
+    mapping(address => mapping(uint256 => uint256)) private _migrationPool;
+
+    // migration routine
+    function migrateToken(uint256 _pid, uint256 amount) internal returns (uint256){
+        require(poolInfoMigration[_pid].enabled, "invalid migration");
         PoolInfo storage pool = poolInfo[_pid];
         PoolInfoMigration storage mig = poolInfoMigration[_pid];
-        if( mid.startBlock < block.number ) return;
-        if( mid.endBlock > block.number ) return;
-        if( mid.ratio != 1 )
-            amount = amount.div(mid.ratio);
-        require( amount <= mid.max, "too much token to migrate");
-
+        require(mig.startBlock == 0 || mig.startBlock >= block.number, "invalid start");
+        require(mig.endBlock == 0 || mig.endBlock < block.number, "already finished");
+        if (mig.ratio > 1)
+            amount = amount.div(mig.ratio);
+        require(mig.max == 0 || amount <= mig.max && _migrationPool[msg.sender][_pid] <= mig.max,
+            "too much token to migrate");
         require(amount > 0, "amount=0");
         uint256 oldBalance = pool.lpToken.balanceOf(address(this));
-        pool.lpToken.safeTransferFrom(address(msg.sender), mid.reserve, amount);
+        pool.lpToken.safeTransferFrom(address(msg.sender), mig.reserve, amount);
         uint256 newBalance = pool.lpToken.balanceOf(address(this));
         amount = newBalance.sub(oldBalance);
         token.mintLockedToken(address(this), amount);
         // stake minted amount in the native pool
-        emit Migration(msg.sender, _pid, _amount);
+        emit Migration(msg.sender, _pid, amount);
+        _migrationPool[msg.sender][_pid] = _migrationPool[msg.sender][_pid].add(amount);
         return amount;
     }
 }
