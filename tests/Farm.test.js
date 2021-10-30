@@ -136,7 +136,7 @@ describe('Bank', async function () {
             await this.farm.withdraw(0, DUZENTOS, {from: dev});
 
             balanceOf = await this.TOKEN.balanceOf(dev);
-            expect( fromWei(balanceOf) ).to.be.equal( '2000.204' );
+            expect( fromWei(balanceOf) ).to.be.equal( '200.204' );
         });
 
     });

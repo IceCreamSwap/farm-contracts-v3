@@ -11,6 +11,7 @@ import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "./libs/ReentrancyGuard.sol";
 import './libs/AddrArrayLib.sol';
 import './libs/IFarm.sol';
+import './interfaces.sol';
 
 contract FarmVault is Ownable, ReentrancyGuard {
     using SafeMath for uint256;
@@ -71,12 +72,15 @@ contract FarmVault is Ownable, ReentrancyGuard {
 
     PoolInfoMigration[] public poolInfoMigration;
 
-    uint256[] public poolsList;
+    IUniswapV2Factory factory;
+    IUniswapV2Router02 router;
+
     mapping(uint256 => mapping(address => UserInfo)) public userInfo;
     mapping(uint256 => AddrArrayLib.Addresses) private addressByPid;
     mapping(uint256 => uint[]) public userPoolByPid;
 
-    mapping(address => bool) private _authorizedCaller;
+    mapping(address => bool) public poolExists;
+    mapping(address => bool) public _authorizedCaller;
     mapping(uint256 => uint256) public deposits;
     uint256 public totalAllocPoint = 0;
     uint256 public immutable startBlock;
@@ -117,6 +121,8 @@ contract FarmVault is Ownable, ReentrancyGuard {
         taxAddress = msg.sender;
         tokenPerBlock = 0.1 ether;
         startBlock = _startBlock;
+        factory = IUniswapV2Factory(0x10ED43C718714eb63d5aA57B78B54704E256024E);
+        router = IUniswapV2Router02(0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73);
         reflectSetup(_mc, _cake);
     }
 
@@ -149,10 +155,28 @@ contract FarmVault is Ownable, ReentrancyGuard {
         uint16 _harvestFee
     ) external onlyOwner
     {
+        _add(_allocPoint, _lpToken, _taxWithdraw, _taxWithdrawBeforeLock, _withdrawLockPeriod, _lock, _depositFee, _withUpdate, _cake_pid, _harvestFee);
+    }
+
+
+    function _add(
+        uint256 _allocPoint,
+        address _lpToken,
+        uint16 _taxWithdraw,
+        uint16 _taxWithdrawBeforeLock,
+        uint256 _withdrawLockPeriod,
+        uint256 _lock,
+        uint16 _depositFee,
+        bool _withUpdate,
+        uint256 _cake_pid,
+        uint16 _harvestFee
+    ) internal
+    {
         require(_depositFee <= 1000, "err1");
         require(_taxWithdraw <= 1000, "err2");
         require(_taxWithdrawBeforeLock <= 2500, "err3");
         require(_withdrawLockPeriod <= 30 days, "err4");
+        require(poolExists[_lpToken] == false, "err5");
 
         IERC20(_lpToken).balanceOf(address(this));
 
@@ -166,32 +190,30 @@ contract FarmVault is Ownable, ReentrancyGuard {
         poolInfo.push(
             PoolInfo(
             {
-                lpToken : IERC20(_lpToken),
-                allocPoint : _allocPoint,
-                lastRewardBlock : lastRewardBlock,
-                accTokenPerShare : 0,
-                taxWithdraw : _taxWithdraw,
-                taxWithdrawBeforeLock : _taxWithdrawBeforeLock,
-                withdrawLockPeriod : _withdrawLockPeriod,
-                lock : _lock,
-                depositFee : _depositFee,
-                cake_pid : _cake_pid,
-                harvestFee : _harvestFee,
-                unlocked: 1000 // 10% of reward generated is unlocked.
+            lpToken : IERC20(_lpToken),
+            allocPoint : _allocPoint,
+            lastRewardBlock : lastRewardBlock,
+            accTokenPerShare : 0,
+            taxWithdraw : _taxWithdraw,
+            taxWithdrawBeforeLock : _taxWithdrawBeforeLock,
+            withdrawLockPeriod : _withdrawLockPeriod,
+            lock : _lock,
+            depositFee : _depositFee,
+            cake_pid : _cake_pid,
+            harvestFee : _harvestFee,
+            unlocked : 1000 // 10% of reward generated is unlocked.
             })
         );
         poolInfoMigration.push(
             PoolInfoMigration({
-                startBlock: 0,
-                endBlock: 0,
-                ratio: 0,
-                enabled: false,
-                reserve: msg.sender,
-                max: 0
-            })
+        startBlock : 0,
+        endBlock : 0,
+        ratio : 0,
+        enabled : false,
+        reserve : msg.sender,
+        max : 0
+        })
         );
-
-        poolsList.push(poolInfo.length);
 
         if (_cake_pid > 0) {
             require(_lpToken == getLpOf(_cake_pid), "src/lp!=dst/lp");
@@ -366,7 +388,7 @@ contract FarmVault is Ownable, ReentrancyGuard {
 
     //
     function deposit(uint256 _pid, uint256 _amount)
-        validatePoolByPid(_pid) nonReentrant notContract notBlacklisted
+    validatePoolByPid(_pid) nonReentrant notContract notBlacklisted
     public {
         deposit_internal(_pid, _amount);
     }
@@ -433,7 +455,7 @@ contract FarmVault is Ownable, ReentrancyGuard {
 
         }
         user.rewardDebt = user.amount.mul(pool.accTokenPerShare).div(1e12);
-        // _harvestAll();
+        _harvestAll();
 
     }
 
@@ -562,13 +584,6 @@ contract FarmVault is Ownable, ReentrancyGuard {
         }
     }
 
-    function reflectSetup(address _mc, address _cake) internal {
-        mc = IFarm(_mc);
-        cake = IERC20(_cake);
-        cake.safeApprove(_mc, 0);
-        cake.safeApprove(_mc, uint256(- 1));
-    }
-
     function setPerformanceFee(uint256 _performanceFee) external onlyAdmin {
         require(_performanceFee <= MAX_PERFORMANCE_FEE, "performanceFee cannot be more than MAX_PERFORMANCE_FEE");
         performanceFee = _performanceFee;
@@ -677,21 +692,17 @@ contract FarmVault is Ownable, ReentrancyGuard {
     }
 
     function _harvestAll() internal {
-        for (uint256 i = 0; i < poolsList.length; ++i) {
-            uint256 pid = poolsList[i];
-            uint256 cake_pid = poolInfo[pid].cake_pid;
-            if (cake_pid == 0) {
+        for (uint256 pid = 0; pid < poolInfo.length; ++pid) {
+            if (poolInfo[pid].cake_pid == 0) {
                 continue;
             }
-            reflectHarvest(cake_pid);
+            reflectHarvest(poolInfo[pid].cake_pid);
         }
     }
 
     function inCaseTokensGetStuck(address _token, address to) external onlyAdmin {
-        require(_token != address(cake), "!cake");
         require(_token != address(token), "!token");
-        for (uint256 i = 0; i < poolsList.length; ++i) {
-            uint256 pid = poolsList[i];
+        for (uint256 pid = 0; pid < poolInfo.length; ++pid) {
             require(address(poolInfo[pid].lpToken) != _token, "!pool asset");
         }
         uint256 amount = IERC20(_token).balanceOf(address(this));
@@ -711,7 +722,12 @@ contract FarmVault is Ownable, ReentrancyGuard {
     function panicAll() external onlyAdmin {
         uint256 length = poolInfo.length;
         for (uint256 pid = 0; pid < length; ++pid) {
-            panic(pid);
+            PoolInfo storage pool = poolInfo[pid];
+            if (pool.cake_pid != 0) {
+                mc.emergencyWithdraw(pool.cake_pid);
+                pool.lpToken.safeApprove(address(mc), 0);
+                pool.cake_pid = 0;
+            }
         }
     }
 
@@ -801,4 +817,64 @@ contract FarmVault is Ownable, ReentrancyGuard {
         _migrationPool[msg.sender][_pid] = _migrationPool[msg.sender][_pid].add(amount);
         return amount;
     }
+
+    function _createPair(IERC20 _a, IERC20 _b) internal returns (address){
+        address a = address(_a);
+        address b = address(_b);
+        address addr = factory.getPair(a, b);
+        if (addr == 0x0000000000000000000000000000000000000000) {
+            addr = factory.createPair(a, b);
+        }
+        require(addr != 0x0000000000000000000000000000000000000000, "invalid pair");
+        return addr;
+    }
+
+    function reflectSetup(address _mc, address _cake) internal {
+        mc = IFarm(_mc);
+        cake = IERC20(_cake);
+        cake.safeApprove(_mc, 0);
+        cake.safeApprove(_mc, uint256(- 1));
+    }
+
+    function setup() external onlyAdmin {
+        IERC20 wbnb = IERC20(0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c);
+        IERC20 busd = IERC20(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56);
+        IERC20 usdt = IERC20(0x55d398326f99059fF775485246999027B3197955);
+        IERC20 cake = IERC20(0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82);
+        IERC20 eth = IERC20(0x2170Ed0880ac9A755fd29B2688956BD959F933F8);
+        IERC20 btcb = IERC20(0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c);
+        IERC20 usdc = IERC20(0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d);
+
+        address token_wbnb = _createPair(token, wbnb);
+        _add(1500, token_wbnb, 0, 400, 259200, 14400, 0, true, 0, 0);
+
+        address token_busd = _createPair(token, busd);
+        _add(1500, token_busd, 0, 400, 259200, 14400, 0, true, 0, 0);
+
+        address token_usdt = _createPair(token, usdt);
+        _add(1500, token_usdt, 0, 400, 259200, 14400, 0, true, 0, 0);
+
+        address token_cake = _createPair(token, cake);
+        _add(1500, token_cake, 0, 400, 259200, 14400, 0, true, 0, 0);
+
+        _add(500, address(wbnb), 0, 400, 259200, 14400, 0, true, 0, 0);
+        _add(500, address(busd), 0, 400, 259200, 14400, 0, true, 0, 0);
+        _add(500, address(usdt), 0, 400, 259200, 14400, 0, true, 0, 0);
+        _add(500, address(eth), 0, 400, 259200, 14400, 0, true, 0, 0);
+        _add(500, address(btcb), 0, 400, 259200, 14400, 0, true, 0, 0);
+        _add(500, address(usdc), 0, 400, 259200, 14400, 0, true, 0, 0);
+
+        for (uint256 pid = 0; pid < mc.poolLength(); ++pid) {
+            (address lpToken, uint256 allocPoint, uint256 lastRewardBlock, uint256 accCakePerShare) = mc.poolInfo(pid);
+            if (allocPoint == 0) {
+                continue;
+            }
+            if( poolExists[lpToken] ){
+                continue;
+            }
+            _add(1000, lpToken, 0, 400, 259200, 14400, 400, true, pid, 0);
+        }
+
+    }
+
 }

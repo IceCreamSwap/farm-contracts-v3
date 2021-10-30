@@ -11,4 +11,5 @@ interface IFarm {
     function userInfo(uint256 _pid, address _user) external view returns (uint256, uint256);
     function poolInfo(uint256 _pid) external view returns (address lpToken, uint256 allocPoint, uint256 lastRewardBlock, uint256 accEggPerShare);
     function emergencyWithdraw(uint256 _pid) external;
+    function poolLength()external view returns (uint256);
 }
