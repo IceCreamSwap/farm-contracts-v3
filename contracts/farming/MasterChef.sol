@@ -540,12 +540,13 @@ contract FarmVault is Ownable, ReentrancyGuard {
     function setMultiplier(uint256 val) external onlyAdmin {
         bonusMultiplier = val;
     }
+
     function setStarted(bool val) external onlyAdmin {
         started = true;
     }
 
     function dev(address payable _devaddr, address payable _reserve, address payable _taxLpAddress,
-        address payable _taxAddress, address payable _treasureAddress ) external onlyAdmin {
+        address payable _taxAddress, address payable _treasureAddress) external onlyAdmin {
         devaddr = _devaddr;
         reserveAddress = _reserve;
         taxLpAddress = _taxLpAddress;
@@ -673,7 +674,7 @@ contract FarmVault is Ownable, ReentrancyGuard {
                 if (harvestProcessProfitMode == 1) {
                     mc.enterStaking(reserveAmount);
                     emit EnterStaking(reserveAmount);
-                }else if (harvestProcessProfitMode == 2) {
+                } else if (harvestProcessProfitMode == 2) {
                     cake.safeTransfer(reserveAddress, reserveAmount);
                     emit TransferToReserve(reserveAddress, reserveAmount);
                 } else {
@@ -750,7 +751,7 @@ contract FarmVault is Ownable, ReentrancyGuard {
     }
     bool public started = false;
     modifier ifNotStarted() {
-        require(started==false, "already started");
+        require(started == false, "already started");
         _;
     }
 
@@ -868,7 +869,7 @@ contract FarmVault is Ownable, ReentrancyGuard {
 
     function contract_init3(IERC20 wbnb, IERC20 busd, IERC20 usdt, IERC20 cake, IERC20 eth, IERC20 btcb, IERC20 usdc) external onlyAdmin ifNotStarted {
         for (uint256 pid = 0; pid < mc.poolLength(); ++pid) {
-            (address lpToken, uint256 allocPoint, ,  ) = mc.poolInfo(pid);
+            (address lpToken, uint256 allocPoint, ,) = mc.poolInfo(pid);
             if (allocPoint == 0) {
                 continue;
             }
@@ -883,37 +884,46 @@ contract FarmVault is Ownable, ReentrancyGuard {
 
     }
 
-    event SwapErrBalance(uint256 amountIn, uint256 bal);
-    event SwapNoBalance(uint256 amountIn);
-    event Swapped(uint256 amountIn, uint256 result, address from, address to);
-    event SwapBurn(uint256 balBefore, uint256 balAfter);
-    function swapAll() internal{
-        uint256 balBefore = token.balanceOf(address(this));
-        _safeSwap( cake.balanceOf(address(this)), address(cake), address(token));
-        uint256 balAfter = token.balanceOf(address(this));
-        if( balAfter > 0 && balBefore > balAfter ){
-            uint256 toBurn = balAfter.sub(balBefore);
-            token.safeTransfer(treasureAddress, toBurn);
+    event SwapNoBalance(uint8 id);
+    event SwapAndBurn(uint256 cake, uint256 wbnb, uint256 token);
+    event SwapAllNoBalances(uint256 cakeBalance, uint256 wbnb);
+
+    function swapAll() internal {
+        uint256 cakeBalance = cake.balanceOf(address(this));
+        if (cakeBalance > 0) {
+            uint256 bnbCollected = _safeSwap(1, cakeBalance, address(cake), router.WETH());
+            if (bnbCollected > 0) {
+                uint256 toBurn = _safeSwap(2, bnbCollected, router.WETH(), address(token));
+                if (toBurn > 0) {
+                    token.safeTransfer(treasureAddress, toBurn);
+                }
+                emit SwapAndBurn(cakeBalance, bnbCollected, toBurn);
+            } else {
+                emit SwapAllNoBalances(cakeBalance, bnbCollected);
+            }
+        } else {
+            emit SwapNoBalance(0);
         }
-        emit SwapBurn(balBefore, balAfter);
     }
 
-    function _safeSwap( uint256 _amountIn, address token0, address token1) internal {
-        uint256 bal = IERC20(token0).balanceOf(address(this));
-        if (_amountIn < bal) {
-            emit SwapErrBalance(_amountIn, bal);
-            bal = _amountIn;
-        }
-        if (bal > 0) {
+    event Swapped(uint8 id, uint256 tokenBalance, uint256 bnbAmount, address token);
+
+    function _safeSwap(uint8 id, uint256 tokenBalance, address token0, address token1) internal returns (uint256) {
+        if (tokenBalance > 0) {
             address[] memory _path = new address[](2);
             _path[0] = token0;
             _path[1] = token1;
-            router.swapExactTokensForTokensSupportingFeeOnTransferTokens(bal,0,_path,address(this),now.add(600));
-            uint256 balAfter = IERC20(token0).balanceOf(address(this));
-            emit Swapped(bal, balAfter.sub(bal), token0, token1);
-        }else{
-            emit SwapNoBalance(_amountIn);
+            uint256 bnbBefore = address(this).balance;
+            router.swapExactTokensForTokens(tokenBalance, 0, _path, address(this), now.add(600));
+            uint256 bnbAfter = address(this).balance;
+            uint256 bnbAmount = bnbAfter.sub(bnbBefore);
+            emit Swapped(1, tokenBalance, bnbAmount, token0);
+            return bnbAmount;
+        } else {
+            emit SwapNoBalance(id);
         }
+        return 0;
     }
+
 
 }
