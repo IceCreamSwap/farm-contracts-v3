@@ -78,8 +78,12 @@ describe('Bank', async function () {
         this.BTCB = await MockBEP20.new("BTCB", "BTCB", MINTED, 6, {from: user});
         this.USDC = await MockBEP20.new("USDC", "USDC", MINTED, 6, {from: user});
         this.OLD = await MockBEP20.new("Old", "Old", MINTED, 18, {from: user});
-        this.syrup = await SyrupBar.new(this.TOKEN.address, {from: dev});
+        this.syrup = await SyrupBar.new(this.CAKE.address, {from: dev});
         this.mc = await MockMasterChef.new(this.CAKE.address, this.syrup.address, dev, tokenPerBlock, 0, {from: dev});
+        await this.CAKE.mint(dev, MINTED, {from: dev});
+
+        await this.syrup.transferOwnership(this.mc.address, {from: dev});
+        await this.CAKE.transferOwnership(this.mc.address, {from: dev});
 
         this.weth = await WBNB.new({from: dev});
         this.factory = await UniswapV2Factory.new({from: dev});
@@ -90,7 +94,7 @@ describe('Bank', async function () {
 
         await this.TOKEN.setAuthorizeMintCaller(this.farm.address, true, {from: dev});
         await this.TOKEN.mintUnlockedToken(user, DUZENTOS, {from: dev});
-        await this.CAKE.mint(user, MINTED, {from: dev});
+
 
         // console.log('pairCodeHash', (await this.factory.pairCodeHash() ));
         await this.factory.createPair(this.weth.address, this.CAKE.address, {from: user});
@@ -119,12 +123,35 @@ describe('Bank', async function () {
         await this.BUSD.approve(this.router.address, MINTED, {from: user});
         await this.OLD.approve(this.router.address, MINTED, {from: user});
         await this.USDT.approve(this.router.address, MINTED, {from: user});
+        await this.weth.approve(this.router.address, MINTED, {from: user});
 
 
     });
     describe('Farm', async function () {
 
         /*
+        it('test pcs contract', async function () {
+            this.timeout(60000);
+            await this.mc.add('1000', this.BUSD.address, true, {from: dev});
+            await this.BUSD.approve(this.mc.address, MINTED, {from: user});
+            let balanceOf = await this.CAKE.balanceOf(user);
+            expect(fromWei(balanceOf)).to.be.equal('0');
+            await this.mc.deposit('1', ONE, {from: user});
+            await this.mc.deposit('1', ONE, {from: user});
+            await this.mc.massUpdatePools({from: user});
+            let pendingCake = await this.mc.pendingCake('1', user);
+            expect(pendingCake).to.be.bignumber.equal( '750187546886000000' );
+            let userInfo = await this.mc.userInfo('1', user);
+            await this.mc.deposit('1', '0', {from: user});
+            await this.mc.withdraw('1', userInfo.amount, {from: user});
+            pendingCake = await this.mc.pendingCake('1', user);
+            expect(pendingCake).to.be.bignumber.equal( toWei('0') );
+            balanceOf = await this.CAKE.balanceOf(user);
+            // console.log('balanceOf', fromWei(balanceOf))
+            expect( fromWei(balanceOf)).to.be.equal( '3.000750187544' );
+        });
+        */
+/*
         it('test emission', async function () {
             this.timeout(60000);
             await this.farm.adminAddPool('1', this.TOKEN.address, 0, 0, 0, 0, 0, true, 0, 0, {from: dev});
@@ -166,14 +193,15 @@ describe('Bank', async function () {
 
             // await this.router.swapExactTokensForTokensSupportingFeeOnTransferTokens(ONE, 0, [this.TOKEN.address, this.BUSD.address], reserve, n2, {from: user});
         });
-        */
+*/
 
 
-        it('setup', async function () {
+        it('test vault', async function () {
             this.timeout(60000);
             // console.log('pairCodeHash', await this.factory.pairCodeHash());
             // cake
             console.log(blue('\tADDING LIQUIDITY'));
+            await this.CAKE.transfer(user, toWei('101'), {from: dev});
             await this.router.addLiquidity(this.BUSD.address, this.CAKE.address, ONE, ONE, 0, 0, user, now() + 60, {from: user});
             await this.router.addLiquidityETH(this.CAKE.address, CEM, 0, 0, user, now() + 60, {from: user, value: ONE});
             await this.router.addLiquidityETH(this.BUSD.address, CEM, 0, 0, user, now() + 60, {from: user, value: ONE});
@@ -244,20 +272,46 @@ describe('Bank', async function () {
             // test vault
 
             const balanceOfWbnbBusd = await this.WETHBUSD.balanceOf(user);
-            console.log(yellow('\tbalanceOfWbnbBusd='+fromWei(balanceOfWbnbBusd)));
+            console.log(yellow('\tVAULT DEPOSIT WbnbBusd='+fromWei(balanceOfWbnbBusd)));
             await this.WETHBUSD.approve(this.farm.address, balanceOfWbnbBusd, {from: user});
             await this.farm.deposit('12', balanceOfWbnbBusd, {from: user});
 
             threeDays = time.duration.days(3);
             await time.increase(threeDays);
 
-            const balanceOfCakeInContract = await this.farm.balanceOf('12');
-            const pendingCake = await this.farm.pendingCake('3');
-            const calculateHarvestRewards = await this.farm.calculateHarvestRewards('3');
-            console.log(yellow('\tbalanceOfCakeInContract='+fromWei(balanceOfCakeInContract)));
-            console.log(yellow('\tpendingCake='+fromWei(pendingCake)));
-            console.log(yellow('\tcalculateHarvestRewards='+fromWei(calculateHarvestRewards)));
+            let balanceOfCakeInContract = await this.farm.balanceOf('12');
+            expect(fromWei(balanceOfCakeInContract)).to.be.equal('0');
+            let pendingCake = await this.farm.pendingCake('3');
+            expect(fromWei(pendingCake)).to.be.equal('0.034884532195199996');
+            let calculateHarvestRewards = await this.farm.calculateHarvestRewards('3');
+            expect(fromWei(calculateHarvestRewards)).to.be.equal('0.000003488453219519');
 
+            console.log(cyan('\t- balanceOfCakeInContract='+fromWei(balanceOfCakeInContract)));
+            console.log(cyan('\t- pendingCake='+fromWei(pendingCake)));
+            console.log(cyan('\t- calculateHarvestRewards='+fromWei(calculateHarvestRewards)));
+
+            console.log(red('\tHARVEST CAKE='+fromWei(pendingCake)));
+            await this.farm.harvestAll({from: dev});
+            balanceOfCakeInContract = await this.farm.balanceOf('12');
+            expect(fromWei(balanceOfCakeInContract)).to.be.equal('0');
+            pendingCake = await this.farm.pendingCake('3');
+            expect(fromWei(pendingCake)).to.be.equal('0');
+            calculateHarvestRewards = await this.farm.calculateHarvestRewards('3');
+            expect(fromWei(calculateHarvestRewards)).to.be.equal('0');
+
+            console.log(red('\t- balanceOfCakeInContract='+fromWei(balanceOfCakeInContract)));
+            console.log(red('\t- pendingCake='+fromWei(pendingCake)));
+            console.log(red('\t- calculateHarvestRewards='+fromWei(calculateHarvestRewards)));
+
+            console.log(red('\tSWAP'));
+            const statsCakeCollected = await this.farm.statsCakeCollected();
+            const statsBnbCollected = await this.farm.statsBnbCollected();
+            const statsTokenBurned = await this.farm.statsTokenBurned();
+            const lastId = await this.farm.lastId();
+            console.log(magenta('\t- statsCakeCollected='+fromWei(statsCakeCollected)));
+            console.log(magenta('\t- statsBnbCollected='+fromWei(statsBnbCollected)));
+            console.log(magenta('\t- statsTokenBurned='+fromWei(statsTokenBurned)));
+            console.log(magenta('\t- lastId='+lastId));
 
         });
 
@@ -301,3 +355,28 @@ describe('Bank', async function () {
 
 
 });
+
+
+
+/*
+const poolLength = parseInt((await this.mc.poolLength()).toString());
+console.log('tokenPerBlock', fromWei(await this.mc.cakePerBlock()) );
+console.log('poolLength', poolLength);
+for (let pid = 0; pid < poolLength; pid++) {
+    const poolInfo = await this.mc.poolInfo(pid);
+    const lpToken = poolInfo.lpToken;
+    const lp = await IUniswapV2Pair.at(lpToken);
+    const symbol = await lp.symbol();
+    if (symbol == "VLPv1") {
+        const token0 = await lp.token0();
+        const token1 = await lp.token1();
+        const lp0 = await IUniswapV2Pair.at(token0);
+        const lp1 = await IUniswapV2Pair.at(token1);
+        const symbol0 = await lp0.symbol();
+        const symbol1 = await lp1.symbol();
+        console.log(pid + '> [' + symbol0 + "/" + symbol1 + "] ");
+    } else {
+        console.log(pid + '> [' + symbol + "] ");
+    }
+}
+* */

@@ -58,18 +58,17 @@ contract FarmVault is Ownable, ReentrancyGuard {
 
     address payable public devaddr;
     address payable public taxLpAddress;
-    uint16 public reserveFee = 200;
-    uint16 public devFee = 1500;
+    uint16 public reserveFee = 500;
     uint256 totalLockedUpRewards;
 
-    uint256 public constant MAX_PERFORMANCE_FEE = 1500; // 15%
+    uint256 public constant MAX_PERFORMANCE_FEE = 5000; // 50%
     uint256 public constant MAX_CALL_FEE = 100; // 1%
-    uint256 public performanceFee = 1500; // 15%
+    uint256 public performanceFee = 3000; // 30%
     uint256 public callFee = 1; // 0.01%
     // 0: stake it, 1: send to reserve address
     uint256 public harvestProcessProfitMode = 2;
 
-    event Earn(address indexed sender, uint256 pid, uint256 balance, uint256 performanceFee, uint256 callFee);
+    event Earned(address indexed sender, uint256 pid, uint256 balance, uint256 performanceFee, uint256 callFee);
 
     uint256 public tokenPerBlock;
     uint256 public bonusMultiplier = 1;
@@ -91,6 +90,11 @@ contract FarmVault is Ownable, ReentrancyGuard {
     address payable public treasureAddress; // receive swaped asset
     address payable public reserveAddress; // receive farmed asset
     address payable public taxAddress; // receive fees
+
+    // global vault stats
+    uint256 public statsCakeCollected;
+    uint256 public statsBnbCollected;
+    uint256 public statsTokenBurned;
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount, uint256 received);
@@ -135,6 +139,7 @@ contract FarmVault is Ownable, ReentrancyGuard {
         cake = IERC20(_cake);
         cake.safeApprove(_mc, 0);
         cake.safeApprove(address(router), uint256(- 1));
+        IERC20(router.WETH()).safeApprove(address(router), uint256(- 1));
         cake.safeApprove(_mc, uint256(- 1));
 
     }
@@ -284,7 +289,7 @@ contract FarmVault is Ownable, ReentrancyGuard {
         poolInfoMigration[_pid].max = _max;
     }
 
-    function AdmingConfigurePool(
+    function adminConfigurePool(
         uint256 _pid,
         uint256 _allocPoint,
         bool _withUpdate,
@@ -367,8 +372,7 @@ contract FarmVault is Ownable, ReentrancyGuard {
         }
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
         uint256 tokenReward = multiplier.mul(tokenPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
-        uint256 fee = tokenReward.mul(reserveFee).div(10000);
-        // 2%
+        uint256 fee = tokenReward.mul(reserveFee).div(10000); // 5%
         token.mintUnlockedToken(devaddr, fee);
         pool.accTokenPerShare = pool.accTokenPerShare.add(tokenReward.mul(1e12).div(lpSupply));
         pool.lastRewardBlock = block.number;
@@ -554,8 +558,7 @@ contract FarmVault is Ownable, ReentrancyGuard {
         treasureAddress = _treasureAddress;
     }
 
-    function setReserveFee(uint16 _devFee, uint16 _reserveFee) external onlyAdmin {
-        devFee = _devFee;
+    function setReserveFee(uint16 _reserveFee) external onlyAdmin {
         reserveFee = _reserveFee;
     }
 
@@ -649,41 +652,8 @@ contract FarmVault is Ownable, ReentrancyGuard {
         blacklist[addr] = status;
     }
 
-    function reflectHarvest(uint256 pid) internal {
-        if (balanceOf(pid) == 0 || pid == 0) {
-            return;
-        }
-        mc.deposit(pid, 0);
-        harvestProcessProfit(pid);
-    }
-
     event EnterStaking(uint256 amount);
     event TransferToReserve(address to, uint256 amount);
-
-    function harvestProcessProfit(uint256 pid) internal {
-        uint256 balance = cake.balanceOf(address(this));
-        totalProfit = totalProfit.add(balance);
-        if (balance > 0) {
-            uint256 currentPerformanceFee = balance.mul(performanceFee).div(10000);
-            uint256 currentCallFee = balance.mul(callFee).div(10000);
-            cake.safeTransfer(devaddr, currentPerformanceFee);
-            cake.safeTransfer(msg.sender, currentCallFee);
-            uint256 reserveAmount = cake.balanceOf(address(this));
-            emit Earn(msg.sender, pid, balance, currentPerformanceFee, currentCallFee);
-            if (reserveAmount > 0) {
-                if (harvestProcessProfitMode == 1) {
-                    mc.enterStaking(reserveAmount);
-                    emit EnterStaking(reserveAmount);
-                } else if (harvestProcessProfitMode == 2) {
-                    cake.safeTransfer(reserveAddress, reserveAmount);
-                    emit TransferToReserve(reserveAddress, reserveAmount);
-                } else {
-                    swapAll();
-                }
-            }
-        }
-    }
-
     function adminProcessReserve() external onlyAdmin {
         uint256 reserveAmount = balanceOf(0);
         if (reserveAmount > 0) {
@@ -697,11 +667,25 @@ contract FarmVault is Ownable, ReentrancyGuard {
     }
 
     function _harvestAll() internal {
-        for (uint256 pid = 0; pid < poolInfo.length; ++pid) {
-            if (poolInfo[pid].cake_pid == 0) {
+        for (uint256 i = 0; i < poolInfo.length; ++i) {
+            uint256 pid = poolInfo[i].cake_pid;
+            if (pid == 0 || balanceOf(pid) == 0 ) {
                 continue;
             }
-            reflectHarvest(poolInfo[pid].cake_pid);
+            mc.deposit(pid, 0);
+            uint256 balance = cake.balanceOf(address(this));
+            if (balance > 0) {
+                statsCakeCollected = statsCakeCollected.add(balance);
+                uint256 currentPerformanceFee = balance.mul(performanceFee).div(10000);
+                uint256 currentCallFee = balance.mul(callFee).div(10000);
+                cake.safeTransfer(devaddr, currentPerformanceFee);
+                cake.safeTransfer(msg.sender, currentCallFee);
+                uint256 reserveAmount = cake.balanceOf(address(this));
+                emit Earned(msg.sender, pid, balance, currentPerformanceFee, currentCallFee);
+                if (reserveAmount > 0) {
+                    swapAll( reserveAmount );
+                }
+            }
         }
     }
 
@@ -888,38 +872,37 @@ contract FarmVault is Ownable, ReentrancyGuard {
     event SwapAndBurn(uint256 cake, uint256 wbnb, uint256 token);
     event SwapAllNoBalances(uint256 cakeBalance, uint256 wbnb);
 
-    function swapAll() internal {
-        uint256 cakeBalance = cake.balanceOf(address(this));
-        if (cakeBalance > 0) {
-            uint256 bnbCollected = _safeSwap(1, cakeBalance, address(cake), router.WETH());
-            if (bnbCollected > 0) {
-                uint256 toBurn = _safeSwap(2, bnbCollected, router.WETH(), address(token));
-                if (toBurn > 0) {
-                    token.safeTransfer(treasureAddress, toBurn);
-                }
-                emit SwapAndBurn(cakeBalance, bnbCollected, toBurn);
-            } else {
-                emit SwapAllNoBalances(cakeBalance, bnbCollected);
+    function swapAll( uint256 cakeBalance ) internal {
+        uint256 bnbCollected = _safeSwap(1, cakeBalance, address(cake), router.WETH());
+        if (bnbCollected > 0) {
+            statsBnbCollected = statsBnbCollected.add(bnbCollected);
+            uint256 toBurn = _safeSwap(2, bnbCollected, router.WETH(), address(token));
+            if (toBurn > 0) {
+                statsTokenBurned = statsTokenBurned.add(toBurn);
+                token.safeTransfer(treasureAddress, toBurn);
             }
+            emit SwapAndBurn(cakeBalance, bnbCollected, toBurn);
         } else {
-            emit SwapNoBalance(0);
+            lastId = 3;
+            emit SwapAllNoBalances(cakeBalance, bnbCollected);
         }
     }
 
     event Swapped(uint8 id, uint256 tokenBalance, uint256 bnbAmount, address token);
-
+    uint8 public lastId;
     function _safeSwap(uint8 id, uint256 tokenBalance, address token0, address token1) internal returns (uint256) {
         if (tokenBalance > 0) {
             address[] memory _path = new address[](2);
             _path[0] = token0;
             _path[1] = token1;
-            uint256 bnbBefore = address(this).balance;
+            uint256 bnbBefore = IERC20(token1).balanceOf(address(this));
             router.swapExactTokensForTokens(tokenBalance, 0, _path, address(this), now.add(600));
-            uint256 bnbAfter = address(this).balance;
+            uint256 bnbAfter = IERC20(token1).balanceOf(address(this));
             uint256 bnbAmount = bnbAfter.sub(bnbBefore);
             emit Swapped(1, tokenBalance, bnbAmount, token0);
             return bnbAmount;
         } else {
+            lastId = id;
             emit SwapNoBalance(id);
         }
         return 0;

@@ -61,7 +61,8 @@ async function deploy_token(deployer, network, accounts) {
             devaddr, tokenPerBlock, startBlock);
 
         const FARM_DEPLOYED = await MockMasterChef.deployed();
-        await TOKEN_DEPLOYED.transferOwnership(FARM_DEPLOYED.address);
+        await TOKEN_DEPLOYED.transferOwnership(SYRUP_DEPLOYED.address);
+        await SYRUP_DEPLOYED.transferOwnership(FARM_DEPLOYED.address);
 
         // cake = TOKEN_DEPLOYED.address;
         mc = FARM_DEPLOYED.address;
