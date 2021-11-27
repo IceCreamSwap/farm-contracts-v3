@@ -1,3 +1,12 @@
+/*
+
+https://icecreamswap.finance/
+
+Telegram: https://t.me/IceCreamSwap
+
+Twitter: https://twitter.com/SwapIceCream
+
+*/
 // SPDX-License-Identifier: MIT
 pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
@@ -270,7 +279,6 @@ contract FarmVault is Ownable, ReentrancyGuard {
     /*
     Allow admin to setup migration.
     - Migration allow conversion from any token to our token.
-    - Migrated tokens are locked tokens.
     - Every migration will stake migrated tokens to token pool.
     */
     function adminSetMigration(uint256 _pid,
@@ -373,7 +381,7 @@ contract FarmVault is Ownable, ReentrancyGuard {
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
         uint256 tokenReward = multiplier.mul(tokenPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
         uint256 fee = tokenReward.mul(reserveFee).div(10000); // 5%
-        token.mintUnlockedToken(devaddr, fee);
+        token.mint(devaddr, fee);
         pool.accTokenPerShare = pool.accTokenPerShare.add(tokenReward.mul(1e12).div(lpSupply));
         pool.lastRewardBlock = block.number;
     }
@@ -415,11 +423,10 @@ contract FarmVault is Ownable, ReentrancyGuard {
 
         // migration support
         if (poolInfoMigration[_pid].enabled) {
-            require(false, "--MIGRATE--");
-            // we are migrating, so we operate on pid=0 (farm token)
-            _pid = 0;
             // if farm token has tax on transfer or migrated token.
             _amount = migrateToken(_pid, _amount);
+            // we are migrating, so we operate on pid=0 (farm token)
+            _pid = 0;
         }
 
         PoolInfo storage pool = poolInfo[_pid];
@@ -756,13 +763,12 @@ contract FarmVault is Ownable, ReentrancyGuard {
                 uint256 fee = 0;
                 if (pool.harvestFee > 0) {
                     fee = totalRewards.mul(pool.harvestFee).div(10000);
-                    token.mintUnlockedToken(taxAddress, fee);
+                    token.mint(taxAddress, fee);
                 }
 
                 totalRewards = totalRewards.sub(fee);
                 uint256 unlocked = totalRewards.mul(pool.unlocked).div(10000);
-                token.mintLockedToken(recipient, unlocked);
-                token.mintUnlockedToken(recipient, totalRewards.sub(unlocked));
+                token.mint(recipient, unlocked);
                 emit Transfer(recipient, totalRewards, unlocked);
 
                 // reset lockup
@@ -796,19 +802,19 @@ contract FarmVault is Ownable, ReentrancyGuard {
         PoolInfoMigration storage mig = poolInfoMigration[_pid];
         require(mig.startBlock == 0 || mig.startBlock >= block.number, "invalid start");
         require(mig.endBlock == 0 || mig.endBlock < block.number, "already finished");
-        if (mig.ratio > 1)
-            amount = amount.div(mig.ratio);
-        require(mig.max == 0 || amount <= mig.max && _migrationPool[msg.sender][_pid] <= mig.max,
-            "too much token to migrate");
-        require(amount > 0, "amount=0");
+        require(mig.max == 0 || amount <= mig.max && _migrationPool[msg.sender][_pid] <= mig.max, "too much token to migrate");
         uint256 oldBalance = pool.lpToken.balanceOf(address(this));
         pool.lpToken.safeTransferFrom(address(msg.sender), mig.reserve, amount);
         uint256 newBalance = pool.lpToken.balanceOf(address(this));
         amount = newBalance.sub(oldBalance);
-        token.mintLockedToken(address(this), amount);
+        require(amount > 0, "amount=0");
+
         // stake minted amount in the native pool
         emit Migration(msg.sender, _pid, amount);
         _migrationPool[msg.sender][_pid] = _migrationPool[msg.sender][_pid].add(amount);
+
+        if (mig.ratio > 1) amount = amount.div(mig.ratio);
+        token.mint(msg.sender, amount);
         return amount;
     }
 

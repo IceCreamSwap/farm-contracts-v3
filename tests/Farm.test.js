@@ -71,7 +71,7 @@ describe('Bank', async function () {
         user = accounts[1];
 
         this.CAKE = await CakeToken.new({from: dev});
-        this.TOKEN = await Token.new('Token', 'Token', {from: dev});
+        this.TOKEN = await Token.new({from: dev});
         this.BUSD = await MockBEP20.new("BUSD", "BUSD", MINTED, 18, {from: user});
         this.USDT = await MockBEP20.new("USDT", "USDT", MINTED, 6, {from: user});
         this.ETH = await MockBEP20.new("ETH", "ETH", MINTED, 18, {from: user});
@@ -92,8 +92,7 @@ describe('Bank', async function () {
         this.farm = await FarmVault.new(this.TOKEN.address, 0, this.mc.address, this.CAKE.address,
             this.router.address, this.factory.address, {from: dev});
 
-        await this.TOKEN.setAuthorizeMintCaller(this.farm.address, true, {from: dev});
-        await this.TOKEN.mintUnlockedToken(user, DUZENTOS, {from: dev});
+        await this.TOKEN.mint(user, DUZENTOS, {from: dev});
 
 
         // console.log('pairCodeHash', (await this.factory.pairCodeHash() ));

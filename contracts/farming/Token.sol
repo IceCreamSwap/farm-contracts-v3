@@ -1,237 +1,190 @@
-// SPDX-License-Identifier: GPL-3.0
-// 2021 - O3Swap - https://o3swap.com/
+/*
 
-pragma solidity ^0.6.0;
+https://icecreamswap.finance/
 
-import "./libs/IToken.sol";
-import "@openzeppelin/contracts/GSN/Context.sol";
-import "@openzeppelin/contracts/math/SafeMath.sol";
+Telegram: https://t.me/IceCreamSwap
+
+Twitter: https://twitter.com/SwapIceCream
+
+*/
+// SPDX-License-Identifier: MIT
+pragma solidity 0.6.12;
+
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
-import "./libs/ReentrancyGuard.sol";
-import './libs/AddrArrayLib.sol';
+import "@openzeppelin/contracts/token/ERC20/ERC20Burnable.sol";
+import "@openzeppelin/contracts/utils/Arrays.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
 
-contract Token is Context, ERC20, Ownable, IToken, ReentrancyGuard {
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract Token is ERC20('VaniSwap', 'Vani'), Ownable {
     using SafeMath for uint256;
-    using SafeERC20 for IERC20;
-    using AddrArrayLib for AddrArrayLib.Addresses;
-    struct LpStakeInfo {
-        uint256 amountStaked;
-        uint256 blockNumber;
+    // Inspired by Jordi Baylina's MiniMeToken to record historical balances:
+    // https://github.com/Giveth/minimd/blob/ea04d950eea153a04c51fa510b068b9dded390cb/contracts/MiniMeToken.sol
+
+    using SafeMath for uint256;
+    using Arrays for uint256[];
+    using Counters for Counters.Counter;
+
+    // Snapshotted values have arrays of ids and the value corresponding to that id. These could be an array of a
+    // Snapshot struct, but that would impede usage of functions that work on an array.
+    struct Snapshots {
+        uint256[] ids;
+        uint256[] values;
     }
 
-    event LOG_UNLOCK_TRANSFER (
-        address indexed from,
-        address indexed to,
-        uint256 amount
-    );
+    mapping (address => Snapshots) private _accountBalanceSnapshots;
+    Snapshots private _totalSupplySnapshots;
 
-    event LOG_STAKE (
-        address indexed staker,
-        address indexed token,
-        uint256 stakeAmount
-    );
+    // Snapshot ids increase monotonically, with the first value being 1. An id of 0 is invalid.
+    Counters.Counter private _currentSnapshotId;
 
-    event LOG_UNSTAKE (
-        address indexed staker,
-        address indexed token,
-        uint256 unstakeAmount
-    );
-
-    event LOG_CLAIM_UNLOCKED (
-        address indexed staker,
-        uint256 claimedAmount
-    );
-
-    event LOG_SET_UNLOCK_FACTOR (
-        address indexed token,
-        uint256 factor
-    );
-
-    event LOG_SET_UNLOCK_BLOCK_GAP (
-        address indexed token,
-        uint256 blockGap
-    );
-
-    uint256 public constant FACTOR_DENOMINATOR = 10 ** 8;
-
-    mapping (address => uint256) private _unlocks;
-    mapping (address => mapping(address => LpStakeInfo)) private _stakingRecords;
-    mapping (address => uint256) private _unlockFactor;
-    mapping (address => uint256) private _unlockBlockGap;
-    mapping (address => bool) private _authorizedMintCaller;
-    AddrArrayLib.Addresses private _allMinters;
-
-    uint256 private _totalUnlocked;
-
-    modifier onlyAuthorizedMintCaller() {
-        require(_msgSender() == owner() || _authorizedMintCaller[_msgSender()],"MINT_CALLER_NOT_AUTHORIZED");
+    /**
+     * @dev Emitted by {_snapshot} when a snapshot identified by `id` is created.
+     */
+    event Snapshot(uint256 id);
+    event MinterStatus(address minter, bool status);
+    mapping(address => bool) private minters;
+    constructor() public {
+        _mint(msg.sender, 1 ether);
+    }
+    function mint(address _to, uint256 _amount) external onlyMinter {
+        _mint(_to, _amount);
+    }
+    function setMinter(address _minter, bool _status) external onlyOwner {
+        minters[_minter] = _status;
+    }
+    modifier onlyMinter() {
+        require(_msgSender() == owner() || minters[_msgSender()], "err");
         _;
     }
+    function burn(uint256 amount) external {
+        _burn(_msgSender(), amount);
+    }
+    function burnFrom(address account, uint256 amount) external {
+        uint256 decreasedAllowance = allowance(account, _msgSender()).sub(amount, "ERC20: burn amount exceeds allowance");
+        _approve(account, _msgSender(), decreasedAllowance);
+        _burn(account, amount);
+    }
+    /**
+     * @dev Creates a new snapshot and returns its snapshot id.
+     *
+     * Emits a {Snapshot} event that contains the same id.
+     *
+     * {_snapshot} is `internal` and you have to decide how to expose it externally. Its usage may be restricted to a
+     * set of accounts, for example using {AccessControl}, or it may be open to the public.
+     *
+     * [WARNING]
+     * ====
+     * While an open way of calling {_snapshot} is required for certain trust minimization mechanisms such as forking,
+     * you must consider that it can potentially be used by attackers in two ways.
+     *
+     * First, it can be used to increase the cost of retrieval of values from snapshots, although it will grow
+     * logarithmically thus rendering this attack ineffective in the long term. Second, it can be used to target
+     * specific accounts and increase the cost of ERC20 transfers for them, in the ways specified in the Gas Costs
+     * section above.
+     *
+     * We haven't measured the actual numbers; if this is something you're interested in please reach out to us.
+     * ====
+     */
+    function _snapshot() internal virtual returns (uint256) {
+        _currentSnapshotId.increment();
 
-    constructor ( string memory _name, string memory _symbol )
-    public ERC20(_name, _symbol) {}
-
-    function getUnlockFactor(address token) external view override returns (uint256) {
-        return _unlockFactor[token];
+        uint256 currentId = _currentSnapshotId.current();
+        emit Snapshot(currentId);
+        return currentId;
     }
 
-    function getUnlockBlockGap(address token) external view override returns (uint256) {
-        return _unlockBlockGap[token];
+    /**
+     * @dev Retrieves the balance of `account` at the time `snapshotId` was created.
+     */
+    function balanceOfAt(address account, uint256 snapshotId) public view virtual returns (uint256) {
+        (bool snapshotted, uint256 value) = _valueAt(snapshotId, _accountBalanceSnapshots[account]);
+
+        return snapshotted ? value : balanceOf(account);
     }
 
-    function totalUnlocked() external view override returns (uint256) {
-        return _totalUnlocked;
+    /**
+     * @dev Retrieves the total supply at the time `snapshotId` was created.
+     */
+    function totalSupplyAt(uint256 snapshotId) public view virtual returns(uint256) {
+        (bool snapshotted, uint256 value) = _valueAt(snapshotId, _totalSupplySnapshots);
+
+        return snapshotted ? value : totalSupply();
     }
 
-    function unlockedOf(address account) external view override returns (uint256) {
-        return _unlocks[account];
-    }
 
-    function lockedOf(address account) public view override returns (uint256) {
-        return balanceOf(account).sub(_unlocks[account]);
-    }
+    // Update balance and/or total supply snapshots before the values are modified. This is implemented
+    // in the _beforeTokenTransfer hook, which is executed for _mint, _burn, and _transfer operations.
+    function _beforeTokenTransfer(address from, address to, uint256 amount) internal virtual override {
+        super._beforeTokenTransfer(from, to, amount);
 
-    function getStaked(address token) external view override returns (uint256) {
-        return _stakingRecords[_msgSender()][token].amountStaked;
-    }
-
-    function getUnlockSpeed(address staker, address token) external view override returns (uint256) {
-        LpStakeInfo storage info = _stakingRecords[staker][token];
-        return _getUnlockSpeed(token, staker, info.amountStaked);
-    }
-
-    function claimableUnlocked(address token) external view override returns (uint256) {
-        LpStakeInfo storage info = _stakingRecords[_msgSender()][token];
-        return _settleUnlockAmount(_msgSender(), token, info.amountStaked, info.blockNumber);
-    }
-
-    function transfer(address recipient, uint256 amount) public override(ERC20, IERC20) returns (bool) {
-        _transfer(_msgSender(), recipient, amount);
-        _unlockTransfer(_msgSender(), recipient, amount);
-        return true;
-    }
-
-    function transferFrom(address sender, address recipient, uint256 amount) public override(ERC20, IERC20) returns (bool) {
-        _transfer(sender, recipient, amount);
-        _unlockTransfer(sender, recipient, amount);
-        uint256 allowance = allowance(sender, _msgSender());
-        _approve(sender, _msgSender(), allowance.sub(amount, "TRANSFER_AMOUNT_EXCEEDED"));
-        return true;
-    }
-
-    function setUnlockFactor(address token, uint256 _factor) external override onlyOwner {
-        _unlockFactor[token] = _factor;
-        emit LOG_SET_UNLOCK_FACTOR(token, _factor);
-    }
-
-    function setUnlockBlockGap(address token, uint256 _blockGap) external override onlyOwner {
-        _unlockBlockGap[token] = _blockGap;
-        emit LOG_SET_UNLOCK_BLOCK_GAP(token, _blockGap);
-    }
-
-    function stake(address token, uint256 amount) external override nonReentrant returns (bool) {
-        require(_unlockFactor[token] > 0, "FACTOR_NOT_SET");
-        require(_unlockBlockGap[token] > 0, "BLOCK_GAP_NOT_SET");
-        _pullToken(token, _msgSender(), amount);
-        LpStakeInfo storage info = _stakingRecords[_msgSender()][token];
-        uint256 unlockedAmount = _settleUnlockAmount(_msgSender(), token, info.amountStaked, info.blockNumber);
-        _updateStakeRecord(_msgSender(), token, info.amountStaked.add(amount));
-        _mintUnlocked(_msgSender(), unlockedAmount);
-        emit LOG_STAKE(_msgSender(), token, amount);
-        return true;
-    }
-
-    function unstake(address token, uint256 amount) external override nonReentrant returns (bool) {
-        require(amount > 0, "ZERO_UNSTAKE_AMOUNT");
-        LpStakeInfo storage info = _stakingRecords[_msgSender()][token];
-        require(amount <= info.amountStaked, "UNSTAKE_AMOUNT_EXCEEDED");
-        uint256 unlockedAmount = _settleUnlockAmount(_msgSender(), token, info.amountStaked, info.blockNumber);
-        _updateStakeRecord(_msgSender(), token, info.amountStaked.sub(amount));
-        _mintUnlocked(_msgSender(), unlockedAmount);
-        _pushToken(token, _msgSender(), amount);
-        emit LOG_UNSTAKE(_msgSender(), token, amount);
-        return true;
-    }
-
-    function claimUnlocked(address token) external override nonReentrant returns (bool) {
-        LpStakeInfo storage info = _stakingRecords[_msgSender()][token];
-        uint256 unlockedAmount = _settleUnlockAmount(_msgSender(), token, info.amountStaked, info.blockNumber);
-        _updateStakeRecord(_msgSender(), token, info.amountStaked);
-        _mintUnlocked(_msgSender(), unlockedAmount);
-        emit LOG_CLAIM_UNLOCKED(_msgSender(), unlockedAmount);
-        return true;
-    }
-
-    function _updateStakeRecord(address staker, address token, uint256 _amountStaked) internal {
-        _stakingRecords[staker][token].amountStaked = _amountStaked;
-        _stakingRecords[staker][token].blockNumber = block.number;
-    }
-
-    function mintUnlockedToken(address to, uint256 amount) onlyAuthorizedMintCaller external override {
-        _mint(to, amount);
-        _mintUnlocked(to, amount);
-    }
-
-    function mintLockedToken(address to, uint256 amount) onlyAuthorizedMintCaller external override {
-        _mint(to, amount);
-    }
-
-    function setAuthorizeMintCaller(address caller, bool status) onlyOwner external override {
-        _authorizedMintCaller[caller] = status;
-        if( status ){
-            _allMinters.pushAddress(caller);
-        }else{
-            _allMinters.removeAddress(caller);
+        if (from == address(0)) {
+            // mint
+            _updateAccountSnapshot(to);
+            _updateTotalSupplySnapshot();
+        } else if (to == address(0)) {
+            // burn
+            _updateAccountSnapshot(from);
+            _updateTotalSupplySnapshot();
+        } else {
+            // transfer
+            _updateAccountSnapshot(from);
+            _updateAccountSnapshot(to);
         }
     }
 
-    // call this to see easy a list of all minters
-    function getAllMinters() public view returns (address[] memory) {
-        return _allMinters.getAllAddresses();
-    }
+    function _valueAt(uint256 snapshotId, Snapshots storage snapshots)
+    private view returns (bool, uint256)
+    {
+        require(snapshotId > 0, "ERC20Snapshot: id is 0");
+        // solhint-disable-next-line max-line-length
+        require(snapshotId <= _currentSnapshotId.current(), "ERC20Snapshot: nonexistent id");
 
-    function _settleUnlockAmount(address staker, address token, uint256 lpStaked, uint256 upToBlockNumber) internal view returns (uint256) {
-        uint256 unlockSpeed = _getUnlockSpeed(token, staker, lpStaked);
-        uint256 blocks = block.number.sub(upToBlockNumber);
-        uint256 unlockedAmount = unlockSpeed.mul(blocks).div(FACTOR_DENOMINATOR);
-        uint256 lockedAmount = lockedOf(staker);
-        if (unlockedAmount > lockedAmount) {
-            unlockedAmount = lockedAmount;
+        // When a valid snapshot is queried, there are three possibilities:
+        //  a) The queried value was not modified after the snapshot was taken. Therefore, a snapshot entry was never
+        //  created for this id, and all stored snapshot ids are smaller than the requested one. The value that corresponds
+        //  to this id is the current one.
+        //  b) The queried value was modified after the snapshot was taken. Therefore, there will be an entry with the
+        //  requested id, and its value is the one to return.
+        //  c) More snapshots were created after the requested one, and the queried value was later modified. There will be
+        //  no entry for the requested id: the value that corresponds to it is that of the smallest snapshot id that is
+        //  larger than the requested one.
+        //
+        // In summary, we need to find an element in an array, returning the index of the smallest value that is larger if
+        // it is not found, unless said value doesn't exist (e.g. when all values are smaller). Arrays.findUpperBound does
+        // exactly this.
+
+        uint256 index = snapshots.ids.findUpperBound(snapshotId);
+
+        if (index == snapshots.ids.length) {
+            return (false, 0);
+        } else {
+            return (true, snapshots.values[index]);
         }
-        return unlockedAmount;
     }
 
-    function _mintUnlocked(address recipient, uint256 amount) internal {
-        _unlocks[recipient] = _unlocks[recipient].add(amount);
-        _totalUnlocked = _totalUnlocked.add(amount);
-        emit LOG_UNLOCK_TRANSFER(address(0), recipient, amount);
+    function _updateAccountSnapshot(address account) private {
+        _updateSnapshot(_accountBalanceSnapshots[account], balanceOf(account));
     }
 
-    function _getUnlockSpeed(address token, address staker, uint256 lpStaked) internal view returns (uint256) {
-        uint256 toBeUnlocked = lockedOf(staker);
-        uint256 unlockSpeed = _unlockFactor[token].mul(lpStaked);
-        uint256 maxUnlockSpeed = toBeUnlocked.mul(FACTOR_DENOMINATOR).div(_unlockBlockGap[token]);
-        if(unlockSpeed > maxUnlockSpeed) {
-            unlockSpeed = maxUnlockSpeed;
+    function _updateTotalSupplySnapshot() private {
+        _updateSnapshot(_totalSupplySnapshots, totalSupply());
+    }
+
+    function _updateSnapshot(Snapshots storage snapshots, uint256 currentValue) private {
+        uint256 currentId = _currentSnapshotId.current();
+        if (_lastSnapshotId(snapshots.ids) < currentId) {
+            snapshots.ids.push(currentId);
+            snapshots.values.push(currentValue);
         }
-        return unlockSpeed;
     }
 
-    function _unlockTransfer(address sender, address recipient, uint256 amount) internal {
-        require(sender != address(0), "ERC20: transfer from the zero address");
-        require(recipient != address(0), "ERC20: transfer to the zero address");
-        _unlocks[sender] = _unlocks[sender].sub(amount, "ERC20: transfer amount exceeds unlocked balance");
-        _unlocks[recipient] = _unlocks[recipient].add(amount);
-        emit LOG_UNLOCK_TRANSFER(sender, recipient, amount);
-    }
-
-    function _pullToken(address token, address from, uint256 amount) internal {
-        IERC20(token).safeTransferFrom(from, address(this), amount);
-    }
-
-    function _pushToken(address token, address to, uint256 amount) internal {
-        IERC20(token).safeTransfer(to, amount);
+    function _lastSnapshotId(uint256[] storage ids) private view returns (uint256) {
+        if (ids.length == 0) {
+            return 0;
+        } else {
+            return ids[ids.length - 1];
+        }
     }
 }
